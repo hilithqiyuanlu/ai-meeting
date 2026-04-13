@@ -1,0 +1,11 @@
+node_modules
+dist
+dist-electron
+.vite
+release
+coverage
+*.db
+*.db-shm
+*.db-wal
+storage
+swift/SystemAudioCaptureHelper/.build
