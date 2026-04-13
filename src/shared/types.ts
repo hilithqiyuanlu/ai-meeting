@@ -5,6 +5,9 @@ export type LlmProviderId = "openai-compatible-llm" | "gemini-openai-compatible"
 export type TranscriptSegmentKind = "speech" | "silence" | "unclear" | "error";
 export type AudioActivityState = "unknown" | "capturing" | "near-silence" | "no-signal" | "device-error";
 export type CaptureMode = "microphone" | "system-audio";
+export type AsrRuntime = "cloud" | "sherpa-onnx";
+export type LocalAsrLanguage = "auto" | "zh" | "yue" | "en" | "ja" | "ko";
+export type LocalAsrModelState = "not-downloaded" | "downloading" | "ready" | "error";
 
 export interface MeetingSession {
   id: string;
@@ -44,6 +47,9 @@ export interface MeetingSummary {
   actionItems: string[];
   risks: string[];
   rawResponse: string;
+  sourceSegmentSeq: number;
+  sourceTranscriptChars: number;
+  generatedWhileStatus: Extract<MeetingStatus, "recording" | "paused" | "completed">;
   createdAt: string;
   updatedAt: string;
 }
@@ -60,11 +66,15 @@ export interface MeetingQaItem {
 export interface ProviderConfig {
   asr: {
     providerId: AsrProviderId;
+    runtime: AsrRuntime;
     endpoint: string;
     apiKey: string;
     model: string;
     language: string;
     chunkMs: number;
+    localModelId: string | null;
+    localModelDir: string | null;
+    localLanguage: LocalAsrLanguage;
   };
   llm: {
     providerId: LlmProviderId;
@@ -91,6 +101,14 @@ export interface AudioInputDevice {
   isBlackHole: boolean;
 }
 
+export interface LocalAsrStatus {
+  modelId: string | null;
+  state: LocalAsrModelState;
+  progress: number | null;
+  storagePath: string | null;
+  errorMessage: string | null;
+}
+
 export interface EnvironmentStatus {
   platform: string;
   isMacOS: boolean;
@@ -102,6 +120,11 @@ export interface EnvironmentStatus {
   systemAudioDevices: AudioInputDevice[];
   voiceProcessingAvailable: boolean;
   helperBuildHint: string;
+  localAsrSupported: boolean;
+  localModelState: LocalAsrModelState;
+  localModelDownloadProgress: number | null;
+  localModelStoragePath: string | null;
+  localModelErrorMessage: string | null;
 }
 
 export interface MeetingDetail {
@@ -164,6 +187,7 @@ export interface AppEventMap {
     sessionId: string;
     summary: MeetingSummary | null;
   };
+  "local-model-updated": LocalAsrStatus;
   error: {
     scope: string;
     message: string;

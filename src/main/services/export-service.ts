@@ -27,6 +27,7 @@ export class ExportService {
 
     if (detail.summary) {
       lines.push("## AI 纪要", "", detail.summary.overview, "");
+      lines.push(`- 纪要来源：基于第 ${detail.summary.sourceSegmentSeq} 段生成`, "");
       lines.push("### 关键结论", ...detail.summary.bulletPoints.map((item) => `- ${item}`), "");
       lines.push("### 待办事项", ...detail.summary.actionItems.map((item) => `- ${item}`), "");
       lines.push("### 风险与未决问题", ...detail.summary.risks.map((item) => `- ${item}`), "");
@@ -41,10 +42,16 @@ export class ExportService {
   }
 
   private toText(detail: MeetingDetail, includePlaceholders: boolean): string {
-    return detail.transcriptSegments
+    const lines = detail.transcriptSegments
       .map((segment) => this.formatSegment(segment, includePlaceholders))
       .filter(Boolean)
       .join("\n");
+
+    if (!detail.summary) {
+      return lines;
+    }
+
+    return [`[AI 纪要基于第 ${detail.summary.sourceSegmentSeq} 段生成]`, lines].filter(Boolean).join("\n");
   }
 
   private formatSegment(detailSegment: MeetingDetail["transcriptSegments"][number], includePlaceholders: boolean): string {

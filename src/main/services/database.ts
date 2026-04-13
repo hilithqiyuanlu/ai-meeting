@@ -15,11 +15,15 @@ import type {
 const defaultProviderConfig: ProviderConfig = {
   asr: {
     providerId: "gemini-openai-audio",
+    runtime: "cloud",
     endpoint: "https://generativelanguage.googleapis.com/v1beta/openai",
     apiKey: "",
     model: "gemini-2.5-flash",
     language: "zh-CN",
-    chunkMs: 5000
+    chunkMs: 5000,
+    localModelId: null,
+    localModelDir: null,
+    localLanguage: "auto"
   },
   llm: {
     providerId: "gemini-openai-compatible",
@@ -105,6 +109,9 @@ export class AppDatabase {
         actionItemsJson TEXT NOT NULL,
         risksJson TEXT NOT NULL,
         rawResponse TEXT NOT NULL,
+        sourceSegmentSeq INTEGER NOT NULL DEFAULT 0,
+        sourceTranscriptChars INTEGER NOT NULL DEFAULT 0,
+        generatedWhileStatus TEXT NOT NULL DEFAULT 'completed',
         createdAt TEXT NOT NULL,
         updatedAt TEXT NOT NULL,
         FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE
@@ -136,6 +143,9 @@ export class AppDatabase {
     this.ensureColumn("transcript_segments", "input_level", "REAL NOT NULL DEFAULT 0");
     this.ensureColumn("transcript_segments", "overlap_chars", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("sessions", "captureMode", "TEXT NOT NULL DEFAULT 'system-audio'");
+    this.ensureColumn("summaries", "sourceSegmentSeq", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("summaries", "sourceTranscriptChars", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("summaries", "generatedWhileStatus", "TEXT NOT NULL DEFAULT 'completed'");
   }
 
   private seedDefaults(): void {
@@ -297,19 +307,31 @@ export class AppDatabase {
       actionItemsJson: JSON.stringify(summary.actionItems),
       risksJson: JSON.stringify(summary.risks),
       rawResponse: summary.rawResponse,
+      sourceSegmentSeq: summary.sourceSegmentSeq,
+      sourceTranscriptChars: summary.sourceTranscriptChars,
+      generatedWhileStatus: summary.generatedWhileStatus,
       createdAt: existing?.createdAt ?? now,
       updatedAt: now
     };
 
     this.db.prepare(`
-      INSERT INTO summaries (sessionId, overview, bulletPointsJson, actionItemsJson, risksJson, rawResponse, createdAt, updatedAt)
-      VALUES (@sessionId, @overview, @bulletPointsJson, @actionItemsJson, @risksJson, @rawResponse, @createdAt, @updatedAt)
+      INSERT INTO summaries (
+        sessionId, overview, bulletPointsJson, actionItemsJson, risksJson, rawResponse,
+        sourceSegmentSeq, sourceTranscriptChars, generatedWhileStatus, createdAt, updatedAt
+      )
+      VALUES (
+        @sessionId, @overview, @bulletPointsJson, @actionItemsJson, @risksJson, @rawResponse,
+        @sourceSegmentSeq, @sourceTranscriptChars, @generatedWhileStatus, @createdAt, @updatedAt
+      )
       ON CONFLICT(sessionId) DO UPDATE SET
         overview = excluded.overview,
         bulletPointsJson = excluded.bulletPointsJson,
         actionItemsJson = excluded.actionItemsJson,
         risksJson = excluded.risksJson,
         rawResponse = excluded.rawResponse,
+        sourceSegmentSeq = excluded.sourceSegmentSeq,
+        sourceTranscriptChars = excluded.sourceTranscriptChars,
+        generatedWhileStatus = excluded.generatedWhileStatus,
         updatedAt = excluded.updatedAt
     `).run(payload);
 
@@ -325,6 +347,9 @@ export class AppDatabase {
           actionItemsJson: string;
           risksJson: string;
           rawResponse: string;
+          sourceSegmentSeq?: number;
+          sourceTranscriptChars?: number;
+          generatedWhileStatus?: MeetingSummary["generatedWhileStatus"];
           createdAt: string;
           updatedAt: string;
         }
@@ -341,6 +366,9 @@ export class AppDatabase {
       actionItems: JSON.parse(row.actionItemsJson) as string[],
       risks: JSON.parse(row.risksJson) as string[],
       rawResponse: row.rawResponse,
+      sourceSegmentSeq: row.sourceSegmentSeq ?? 0,
+      sourceTranscriptChars: row.sourceTranscriptChars ?? 0,
+      generatedWhileStatus: row.generatedWhileStatus ?? "completed",
       createdAt: row.createdAt,
       updatedAt: row.updatedAt
     };
@@ -465,6 +493,14 @@ export class AppDatabase {
       merged.llm.model === "gemini-3-flash-preview"
     ) {
       merged.llm.model = "gemini-2.5-flash";
+    }
+
+    if (merged.asr.providerId === "sensevoice-local") {
+      merged.asr.runtime = "sherpa-onnx";
+      merged.asr.localModelId = merged.asr.localModelId ?? "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09";
+      merged.asr.chunkMs = merged.asr.chunkMs || 8000;
+    } else {
+      merged.asr.runtime = "cloud";
     }
 
     return merged;

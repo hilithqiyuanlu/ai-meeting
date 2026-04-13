@@ -18,6 +18,7 @@ import { ExportService } from "./export-service";
 import { SystemAudioHelperClient } from "./audio-helper";
 import { computePcmRms, getAudioState } from "@main/utils/audio";
 import { trimOverlappedTranscript } from "@main/utils/transcript";
+import { LocalAsrModelService } from "./local-asr-model-service";
 
 export class MeetingService {
   private recording: RecordingSnapshot = {
@@ -45,12 +46,14 @@ export class MeetingService {
   private activeWindow: BrowserWindow | null = null;
   private transcriptSeq = 0;
   private lastSpeechText = "";
+  private readonly summaryJobs = new Set<string>();
 
   constructor(
     private readonly db: AppDatabase,
     private readonly environmentService: EnvironmentService,
     private readonly exportService: ExportService,
-    private readonly downloadDirectory: string
+    private readonly downloadDirectory: string,
+    private readonly localAsrModelService: LocalAsrModelService
   ) {}
 
   attachWindow(window: BrowserWindow): void {
@@ -209,22 +212,34 @@ export class MeetingService {
   }
 
   async generateSummary(sessionId: string): Promise<MeetingDetail> {
+    if (this.summaryJobs.has(sessionId)) {
+      throw new Error("这场会议的纪要已经在生成中，请稍候。");
+    }
+
     const detail = this.db.getMeetingDetail(sessionId);
     if (!detail.session.transcriptText.trim()) {
       throw new Error("当前会议还没有可用转写内容");
     }
 
     const provider = new OpenAICompatibleLlmProvider(this.db.getProviderConfig().llm);
+    const sourceSegmentSeq = detail.transcriptSegments.at(-1)?.seq ?? 0;
+    const sourceTranscriptChars = detail.session.transcriptText.length;
+    const generatedWhileStatus =
+      detail.session.status === "recording" || detail.session.status === "paused" ? detail.session.status : "completed";
     const generating = this.db.updateSession(sessionId, {
       summaryStatus: "generating"
     });
+    this.summaryJobs.add(sessionId);
     this.emit("session-updated", generating);
 
     try {
       const summary = await provider.generateSummary(detail.session.transcriptText, detail.session.title);
       this.db.saveSummary({
         sessionId,
-        ...summary
+        ...summary,
+        sourceSegmentSeq,
+        sourceTranscriptChars,
+        generatedWhileStatus
       });
       const updated = this.db.updateSession(sessionId, {
         summaryStatus: "ready"
@@ -246,6 +261,8 @@ export class MeetingService {
         message: error instanceof Error ? error.message : String(error)
       });
       throw error;
+    } finally {
+      this.summaryJobs.delete(sessionId);
     }
   }
 
@@ -265,7 +282,10 @@ export class MeetingService {
             bulletPoints: detail.summary.bulletPoints,
             actionItems: detail.summary.actionItems,
             risks: detail.summary.risks,
-            rawResponse: detail.summary.rawResponse
+            rawResponse: detail.summary.rawResponse,
+            sourceSegmentSeq: detail.summary.sourceSegmentSeq,
+            sourceTranscriptChars: detail.summary.sourceTranscriptChars,
+            generatedWhileStatus: detail.summary.generatedWhileStatus
           }
         : null,
       history: detail.qaItems.map((item) => ({
@@ -479,7 +499,16 @@ export class MeetingService {
     this.audioClient = new SystemAudioHelperClient(helperPath);
     this.asrProvider =
       providerConfig.asr.providerId === "sensevoice-local"
-        ? new SenseVoiceLocalProvider(this.buildAsrCallbacks(sessionId))
+        ? new SenseVoiceLocalProvider(
+            {
+              chunkMs: providerConfig.asr.chunkMs || 8000,
+              modelId: providerConfig.asr.localModelId || this.localAsrModelService.getModelId(),
+              modelDir: providerConfig.asr.localModelDir,
+              language: providerConfig.asr.localLanguage,
+              modelService: this.localAsrModelService
+            },
+            this.buildAsrCallbacks(sessionId)
+          )
         : providerConfig.asr.providerId === "gemini-openai-audio"
           ? new GeminiOpenAIAudioAsrProvider(providerConfig.asr, this.buildAsrCallbacks(sessionId))
           : new OpenAICompatibleAsrProvider(providerConfig.asr, this.buildAsrCallbacks(sessionId));

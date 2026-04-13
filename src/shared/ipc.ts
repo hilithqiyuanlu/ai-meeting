@@ -3,6 +3,7 @@ import type {
   BootstrapState,
   EnvironmentStatus,
   ExportFormat,
+  LocalAsrStatus,
   MeetingDetail,
   ProviderConfig,
   RecordingSnapshot,
@@ -15,6 +16,10 @@ export interface AppApi {
   bootstrap(): Promise<BootstrapState>;
   refreshEnvironment(): Promise<EnvironmentStatus>;
   requestMicrophoneAccess(): Promise<boolean>;
+  getLocalAsrState(): Promise<LocalAsrStatus>;
+  downloadLocalAsrModel(): Promise<LocalAsrStatus>;
+  deleteLocalAsrModel(): Promise<LocalAsrStatus>;
+  importLocalAsrModelDir(): Promise<LocalAsrStatus>;
   startMeeting(input: StartMeetingInput): Promise<RecordingSnapshot>;
   pauseMeeting(): Promise<RecordingSnapshot>;
   resumeMeeting(sessionId?: string): Promise<RecordingSnapshot>;

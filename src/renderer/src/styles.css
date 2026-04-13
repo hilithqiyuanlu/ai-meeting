@@ -51,12 +51,14 @@ body {
 body,
 button,
 input,
+select,
 textarea {
   font: inherit;
 }
 
 button,
 input,
+select,
 textarea {
   outline: none;
 }
@@ -87,11 +89,13 @@ button:disabled {
 
 button:focus-visible,
 input:focus-visible,
+select:focus-visible,
 textarea:focus-visible {
   box-shadow: 0 0 0 1px rgba(255, 132, 0, 0.7), 0 0 0 4px rgba(255, 132, 0, 0.16);
 }
 
 input,
+select,
 textarea {
   width: 100%;
   margin-top: 8px;

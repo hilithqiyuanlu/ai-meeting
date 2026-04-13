@@ -3,8 +3,11 @@ import { join } from "node:path";
 import { app, systemPreferences } from "electron";
 import type { EnvironmentStatus } from "@shared/types";
 import { SystemAudioHelperClient } from "./audio-helper";
+import { LocalAsrModelService } from "./local-asr-model-service";
 
 export class EnvironmentService {
+  constructor(private readonly localAsrModelService: LocalAsrModelService) {}
+
   getHelperBinaryPath(): string | null {
     const devPath = join(process.cwd(), "swift/SystemAudioCaptureHelper/.build/release/SystemAudioCaptureHelper");
     const packagedPath = join(process.resourcesPath, "SystemAudioCaptureHelper");
@@ -29,6 +32,7 @@ export class EnvironmentService {
     const microphonePermission = this.getMicrophonePermission();
     const microphoneDevices = audioDevices.filter((device) => !device.isBlackHole);
     const systemAudioDevices = audioDevices.filter((device) => device.isBlackHole);
+    const localAsr = await this.localAsrModelService.getState();
     return {
       platform: process.platform,
       isMacOS: process.platform === "darwin",
@@ -39,7 +43,12 @@ export class EnvironmentService {
       microphoneDevices,
       systemAudioDevices,
       voiceProcessingAvailable: false,
-      helperBuildHint: "运行 `pnpm swift:build` 以构建 SystemAudioCaptureHelper"
+      helperBuildHint: "运行 `pnpm swift:build` 以构建 SystemAudioCaptureHelper",
+      localAsrSupported: process.platform === "darwin",
+      localModelState: localAsr.state,
+      localModelDownloadProgress: localAsr.progress,
+      localModelStoragePath: localAsr.storagePath,
+      localModelErrorMessage: localAsr.errorMessage
     };
   }
 

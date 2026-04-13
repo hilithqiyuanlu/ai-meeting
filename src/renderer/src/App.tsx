@@ -3,6 +3,7 @@ import type {
   AppPreferences,
   BootstrapState,
   EnvironmentStatus,
+  LocalAsrStatus,
   MeetingDetail,
   MeetingSession,
   ProviderConfig,
@@ -63,6 +64,18 @@ function audioStateLabel(state: RecordingSnapshot["audioState"]): string {
 
 function audioLevelPercent(level: number): number {
   return Math.max(2, Math.min(100, Math.round(level * 900)));
+}
+
+function summarySourceSegment(detail: MeetingDetail | null): number {
+  return detail?.summary?.sourceSegmentSeq ?? 0;
+}
+
+function latestSegmentSeq(detail: MeetingDetail | null): number {
+  return detail?.transcriptSegments.at(-1)?.seq ?? 0;
+}
+
+function summaryNeedsRefresh(detail: MeetingDetail | null): boolean {
+  return !!detail?.summary && latestSegmentSeq(detail) > summarySourceSegment(detail);
 }
 
 function recordingStatusLabel(recording: RecordingSnapshot): string {
@@ -240,6 +253,22 @@ export function App() {
         void loadDetail(payload.sessionId);
       }
     });
+    const offLocalModel = window.appApi.onEvent("local-model-updated", (payload: LocalAsrStatus) => {
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              environment: {
+                ...current.environment,
+                localModelState: payload.state,
+                localModelDownloadProgress: payload.progress,
+                localModelStoragePath: payload.storagePath,
+                localModelErrorMessage: payload.errorMessage
+              }
+            }
+          : current
+      );
+    });
     const offError = window.appApi.onEvent("error", (payload) => {
       setNotice(`${payload.scope}: ${payload.message}`);
     });
@@ -248,6 +277,7 @@ export function App() {
       offRecording();
       offSession();
       offSummary();
+      offLocalModel();
       offError();
     };
   }, [selectedSessionId]);
@@ -460,6 +490,75 @@ export function App() {
     }
   }
 
+  async function downloadLocalModel(): Promise<void> {
+    try {
+      const state = await window.appApi.downloadLocalAsrModel();
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              environment: {
+                ...current.environment,
+                localModelState: state.state,
+                localModelDownloadProgress: state.progress,
+                localModelStoragePath: state.storagePath,
+                localModelErrorMessage: state.errorMessage
+              }
+            }
+          : current
+      );
+      setNotice("SenseVoice 模型已下载");
+    } catch (error) {
+      setNotice(`模型下载失败：${toMessage(error)}`);
+    }
+  }
+
+  async function deleteLocalModel(): Promise<void> {
+    try {
+      const state = await window.appApi.deleteLocalAsrModel();
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              environment: {
+                ...current.environment,
+                localModelState: state.state,
+                localModelDownloadProgress: state.progress,
+                localModelStoragePath: state.storagePath,
+                localModelErrorMessage: state.errorMessage
+              }
+            }
+          : current
+      );
+      setNotice("SenseVoice 模型已删除");
+    } catch (error) {
+      setNotice(`删除模型失败：${toMessage(error)}`);
+    }
+  }
+
+  async function importLocalModelDir(): Promise<void> {
+    try {
+      const state = await window.appApi.importLocalAsrModelDir();
+      setBootstrap((current) =>
+        current
+          ? {
+              ...current,
+              environment: {
+                ...current.environment,
+                localModelState: state.state,
+                localModelDownloadProgress: state.progress,
+                localModelStoragePath: state.storagePath,
+                localModelErrorMessage: state.errorMessage
+              }
+            }
+          : current
+      );
+      setNotice(state.state === "ready" ? "SenseVoice 模型已导入" : "已取消导入");
+    } catch (error) {
+      setNotice(`导入模型失败：${toMessage(error)}`);
+    }
+  }
+
   return (
     <>
       <div className="app-shell">
@@ -526,6 +625,9 @@ export function App() {
                   saving={saving}
                   onRefresh={refreshEnvironment}
                   onRequestAccess={requestMicrophoneAccess}
+                  onDownloadLocalModel={downloadLocalModel}
+                  onDeleteLocalModel={deleteLocalModel}
+                  onImportLocalModelDir={importLocalModelDir}
                   onCompleteGuide={async () => {
                     await completeGuide();
                     setActiveTab("capture");
@@ -766,9 +868,13 @@ function SettingsPanel(props: {
   saving: boolean;
   onRefresh: () => Promise<void>;
   onRequestAccess: () => Promise<void>;
+  onDownloadLocalModel: () => Promise<void>;
+  onDeleteLocalModel: () => Promise<void>;
+  onImportLocalModelDir: () => Promise<void>;
   onCompleteGuide: () => Promise<void>;
 }) {
   const { providerDraft, preferenceDraft, environment } = props;
+  const localAsrSelected = providerDraft.asr.providerId === "sensevoice-local";
 
   return (
     <div className="stack">
@@ -822,43 +928,176 @@ function SettingsPanel(props: {
             <p className="eyebrow">ASR</p>
             <h4>转写服务</h4>
           </div>
-          <label className="form-field">
-            <span>Endpoint</span>
-            <input
-              value={providerDraft.asr.endpoint}
-              onChange={(event) =>
+          <div className="capture-mode-grid">
+            <button
+              className={providerDraft.asr.providerId === "gemini-openai-audio" ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() =>
                 props.onProviderChange({
                   ...providerDraft,
-                  asr: { ...providerDraft.asr, endpoint: event.target.value }
+                  asr: { ...providerDraft.asr, providerId: "gemini-openai-audio", runtime: "cloud" }
                 })
               }
-            />
-          </label>
-          <label className="form-field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={providerDraft.asr.apiKey}
-              onChange={(event) =>
+            >
+              Gemini 音频
+            </button>
+            <button
+              className={providerDraft.asr.providerId === "openai-compatible-asr" ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() =>
                 props.onProviderChange({
                   ...providerDraft,
-                  asr: { ...providerDraft.asr, apiKey: event.target.value }
+                  asr: { ...providerDraft.asr, providerId: "openai-compatible-asr", runtime: "cloud" }
                 })
               }
-            />
-          </label>
-          <label className="form-field">
-            <span>Model</span>
-            <input
-              value={providerDraft.asr.model}
-              onChange={(event) =>
+            >
+              OpenAI-compatible
+            </button>
+            <button
+              className={localAsrSelected ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() =>
                 props.onProviderChange({
                   ...providerDraft,
-                  asr: { ...providerDraft.asr, model: event.target.value }
+                  asr: {
+                    ...providerDraft.asr,
+                    providerId: "sensevoice-local",
+                    runtime: "sherpa-onnx",
+                    chunkMs: providerDraft.asr.chunkMs || 8000
+                  }
                 })
               }
-            />
-          </label>
+            >
+              本地 SenseVoice
+            </button>
+          </div>
+          {localAsrSelected ? (
+            <>
+              <div className="guide-grid">
+                <div className="guide-card">
+                  <span className="guide-label">模型状态</span>
+                  <strong className="mono-text">
+                    {environment.localModelState}
+                    {environment.localModelDownloadProgress !== null ? ` ${environment.localModelDownloadProgress}%` : ""}
+                  </strong>
+                </div>
+                <div className="guide-card">
+                  <span className="guide-label">运行时</span>
+                  <strong className="mono-text">sherpa-onnx</strong>
+                </div>
+              </div>
+              <label className="form-field">
+                <span>识别语言</span>
+                <select
+                  value={providerDraft.asr.localLanguage}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        localLanguage: event.target.value as ProviderConfig["asr"]["localLanguage"]
+                      }
+                    })
+                  }
+                >
+                  <option value="auto">自动</option>
+                  <option value="zh">普通话</option>
+                  <option value="yue">粤语</option>
+                  <option value="en">英语</option>
+                  <option value="ja">日语</option>
+                  <option value="ko">韩语</option>
+                </select>
+              </label>
+              <label className="form-field">
+                <span>分段时长 (ms)</span>
+                <input
+                  type="number"
+                  min={4000}
+                  step={1000}
+                  value={providerDraft.asr.chunkMs}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        chunkMs: Number(event.target.value) || 8000
+                      }
+                    })
+                  }
+                />
+              </label>
+              <p className="muted">模型路径：{environment.localModelStoragePath ?? "尚未下载"}</p>
+              <p className="muted">隐私说明：转写在本机完成，会议纪要仍调用你配置的 LLM。</p>
+              {environment.localModelErrorMessage ? <p className="error-text">模型错误：{environment.localModelErrorMessage}</p> : null}
+              <div className="control-grid">
+                <button
+                  type="button"
+                  disabled={environment.localModelState === "downloading"}
+                  onClick={props.onDownloadLocalModel}
+                >
+                  {environment.localModelState === "ready"
+                    ? "重新下载模型"
+                    : environment.localModelState === "downloading"
+                      ? "下载中..."
+                      : "下载模型"}
+                </button>
+                <button
+                  type="button"
+                  disabled={environment.localModelState === "downloading" || environment.localModelState === "not-downloaded"}
+                  onClick={props.onDeleteLocalModel}
+                >
+                  删除模型
+                </button>
+                <button
+                  type="button"
+                  disabled={environment.localModelState === "downloading"}
+                  onClick={props.onImportLocalModelDir}
+                >
+                  导入模型目录
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <label className="form-field">
+                <span>Endpoint</span>
+                <input
+                  value={providerDraft.asr.endpoint}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: { ...providerDraft.asr, endpoint: event.target.value }
+                    })
+                  }
+                />
+              </label>
+              <label className="form-field">
+                <span>API Key</span>
+                <input
+                  type="password"
+                  value={providerDraft.asr.apiKey}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: { ...providerDraft.asr, apiKey: event.target.value }
+                    })
+                  }
+                />
+              </label>
+              <label className="form-field">
+                <span>Model</span>
+                <input
+                  value={providerDraft.asr.model}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: { ...providerDraft.asr, model: event.target.value }
+                    })
+                  }
+                />
+              </label>
+            </>
+          )}
         </div>
 
         <div className="settings-card">
@@ -953,7 +1192,10 @@ function SettingsPanel(props: {
               </div>
             </div>
 
-            <p className="muted">麦克风模式适合线下会议；系统音频模式适合线上会议，需要提前完成 BlackHole 配置。</p>
+            <p className="muted">
+              麦克风模式适合线下会议；系统音频模式适合线上会议，需要提前完成 BlackHole 配置。本地 ASR 可离线转写，但 AI
+              纪要仍需要配置 LLM。
+            </p>
 
             <div className="control-grid">
               <button type="button" onClick={props.onRequestAccess}>
@@ -1028,6 +1270,7 @@ function SummaryPanel(props: {
   onGenerateSummary: () => Promise<void>;
 }) {
   const summaryStatus = props.detail?.session.summaryStatus ?? "none";
+  const stale = summaryNeedsRefresh(props.detail);
   const statusNode =
     summaryStatus === "generating" ? (
       <span className="summary-status summary-status-loading">
@@ -1059,7 +1302,7 @@ function SummaryPanel(props: {
           type="button"
           onClick={props.onGenerateSummary}
         >
-          生成纪要
+          {stale ? "重新生成纪要" : "生成纪要"}
         </button>
       </div>
       <div className="result-body">
@@ -1070,6 +1313,11 @@ function SummaryPanel(props: {
         ) : props.detail.summary ? (
           <>
             <p>{props.detail.summary.overview}</p>
+            <p className="muted">
+              该纪要基于第 {props.detail.summary.sourceSegmentSeq} 段生成，
+              {props.detail.summary.generatedWhileStatus === "completed" ? "生成时会议已结束。" : "生成时会议仍在进行或暂停中。"}
+            </p>
+            {stale ? <p className="warning-text">会议又新增了转写内容，当前纪要不是最新版本，可以手动重新生成。</p> : null}
             <strong>关键结论</strong>
             <ul>
               {props.detail.summary.bulletPoints.map((item) => (
@@ -1109,7 +1357,7 @@ function SummaryPanel(props: {
             </div>
           </>
         ) : (
-          <p>还没有纪要，停止录制后可以手动生成。生成完成后，你也可以继续对会议内容发起多轮提问。</p>
+          <p>还没有纪要。有转写后即可生成，会议进行中也可以手动刷新。生成完成后，你也可以继续对会议内容发起多轮提问。</p>
         )}
         {props.recording.status === "processing" ? <p className="warning-text">会议正在整理最后几段，完成后再生成纪要会更完整。</p> : null}
       </div>

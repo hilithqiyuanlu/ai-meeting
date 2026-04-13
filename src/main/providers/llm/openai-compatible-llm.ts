@@ -56,7 +56,15 @@ function extractJsonObject(input: string): SummaryPayload | null {
 export class OpenAICompatibleLlmProvider {
   constructor(private readonly config: ProviderConfig["llm"]) {}
 
-  async generateSummary(transcript: string, title: string): Promise<Omit<MeetingSummary, "sessionId" | "createdAt" | "updatedAt">> {
+  async generateSummary(
+    transcript: string,
+    title: string
+  ): Promise<
+    Omit<
+      MeetingSummary,
+      "sessionId" | "createdAt" | "updatedAt" | "sourceSegmentSeq" | "sourceTranscriptChars" | "generatedWhileStatus"
+    >
+  > {
     if (!this.config.apiKey) {
       throw new Error("LLM API Key 未配置");
     }
