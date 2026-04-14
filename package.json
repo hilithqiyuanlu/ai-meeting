@@ -1,6 +1,6 @@
 {
   "name": "ai-meeting",
-  "version": "0.4.2.9",
+  "version": "0.4.3",
   "description": "macOS meeting recorder with realtime transcription and AI summaries",
   "private": true,
   "type": "module",

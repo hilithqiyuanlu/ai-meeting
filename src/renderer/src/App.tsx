@@ -9,6 +9,7 @@ import type {
   ProviderConfig,
   RecordingSnapshot
 } from "@shared/types";
+import { detectMeetingTerms, groupMeetingHighlights, highlightText } from "./meeting-display";
 
 type TabId = "capture" | "settings";
 
@@ -121,6 +122,20 @@ function formatLatency(latencyMs: number | null): string {
     return "暂无";
   }
   return `${latencyMs} ms`;
+}
+
+function formatCueTime(startMs: number | null): string {
+  if (startMs === null) {
+    return "--";
+  }
+
+  if (startMs < 60_000) {
+    return `${Math.round(startMs / 100) / 10}s`;
+  }
+
+  const minutes = Math.floor(startMs / 60_000);
+  const seconds = Math.floor((startMs % 60_000) / 1000);
+  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function summarySourceSegment(detail: MeetingDetail | null): number {
@@ -401,6 +416,7 @@ export function App() {
   const currentSession = selectedSessionId
     ? state.sessions.find((item) => item.id === selectedSessionId) ?? null
     : null;
+  const meetingTerms = useMemo(() => detectMeetingTerms(detail), [detail]);
 
   async function loadDetail(sessionId: string): Promise<void> {
     const next = await window.appApi.getMeetingDetail(sessionId);
@@ -700,7 +716,6 @@ export function App() {
                 onClick={() => setActiveTab("settings")}
               >
                 <span className="sidebar-settings-label">系统设置</span>
-                <span className="sidebar-settings-meta">录音、模型与导出</span>
               </button>
             </div>
           </div>
@@ -711,7 +726,6 @@ export function App() {
             <div className="workspace-heading">
               <p className="eyebrow">{activeTab === "settings" ? "System Preferences" : "Realtime Copilot"}</p>
               <h2>{activeTab === "settings" ? "设置中心" : meetingDisplayTitle(currentSession)}</h2>
-              {activeTab === "settings" ? <p className="workspace-subtitle">统一维护麦克风采集、本地识别链路与导出配置。</p> : null}
             </div>
             {notice ? <div className="notice">{notice}</div> : null}
           </header>
@@ -726,8 +740,8 @@ export function App() {
                     currentSession={currentSession}
                     selectedDeviceId={selectedDeviceId}
                   />
-                  <HighlightsPanel detail={detail} compact />
-                  <TranscriptPanel detail={detail} />
+                  <HighlightsPanel detail={detail} compact meetingTerms={meetingTerms} />
+                  <TranscriptPanel detail={detail} meetingTerms={meetingTerms} />
                 </>
               ) : (
                 <SettingsPanel
@@ -779,6 +793,7 @@ export function App() {
               <SummaryPanel
                 detail={detail}
                 recording={state.recording}
+                meetingTerms={meetingTerms}
                 qaInput={qaInput}
                 asking={asking}
                 onQaInputChange={setQaInput}
@@ -1046,7 +1061,6 @@ function SettingsPanel(props: {
       <section className="settings-hero">
         <p className="eyebrow">System Preferences</p>
         <h3>全局设置</h3>
-        <p className="muted">统一管理采集、转写、纪要和导出。</p>
       </section>
 
       <div className="settings-grid">
@@ -1510,9 +1524,7 @@ function SettingsPanel(props: {
                 }
               />
             </label>
-          ) : (
-            <p className="muted">本地 Ollama 不依赖云端 API Key。当前推荐模型：qwen3.5:4b。</p>
-          )}
+          ) : null}
           <label className="form-field">
             <span>Model</span>
             <input
@@ -1525,7 +1537,6 @@ function SettingsPanel(props: {
               }
             />
           </label>
-          <p className="muted">{localLlmSelected ? "纪要与问答走本机 Ollama。" : "默认推荐：gemini-2.5-flash"}</p>
         </div>
 
         <div className="settings-card settings-card-wide">
@@ -1601,6 +1612,7 @@ function SettingsPanel(props: {
 
 function TranscriptPanel(props: {
   detail: MeetingDetail | null;
+  meetingTerms: string[];
 }) {
   if (!props.detail) {
     return (
@@ -1621,6 +1633,15 @@ function TranscriptPanel(props: {
         </div>
         <span className="mono-text">{props.detail.transcriptSegments.length} 段</span>
       </div>
+      {props.meetingTerms.length > 0 ? (
+        <div className="term-strip">
+          {props.meetingTerms.slice(0, 8).map((term) => (
+            <span key={term} className="status-tag term-chip">
+              {term}
+            </span>
+          ))}
+        </div>
+      ) : null}
       <div className="transcript-list">
         {props.detail.transcriptSegments.map((segment) => (
           <article
@@ -1632,7 +1653,7 @@ function TranscriptPanel(props: {
             <span className="transcript-time mono-text">{segment.startMs}ms</span>
             <div>
               <div className="transcript-meta-row">
-                <p>{segment.kind === "speech" ? segment.text : segment.note || "此段没有可用正文。"}</p>
+                <p>{segment.kind === "speech" ? highlightText(segment.text, props.meetingTerms) : segment.note || "此段没有可用正文。"}</p>
                 <div className="tag-row">
                   <span className={`status-tag quality-${segment.quality}`}>{transcriptQualityLabel(segment.quality)}</span>
                   {segment.overlapDetected ? <span className="status-tag warning">重叠</span> : null}
@@ -1659,6 +1680,7 @@ function TranscriptPanel(props: {
 function HighlightsPanel(props: {
   detail: MeetingDetail | null;
   compact?: boolean;
+  meetingTerms: string[];
 }) {
   if (!props.detail) {
     return (
@@ -1669,6 +1691,9 @@ function HighlightsPanel(props: {
       </div>
     );
   }
+
+  const groups = groupMeetingHighlights(props.detail);
+  const flatItems = groups.flatMap((group) => group.items);
 
   return (
     <div className={`detail-card highlight-card ${props.compact ? "compact" : ""}`}>
@@ -1682,14 +1707,49 @@ function HighlightsPanel(props: {
       {props.detail.highlights.length === 0 ? (
         <p className="muted">当前还没有满足保守阈值的提醒。系统只会在高置信度、非重叠片段上提示重点。</p>
       ) : (
-        <div className="highlight-list">
-          {(props.compact ? props.detail.highlights.slice(0, 2) : props.detail.highlights).map((item) => (
-            <article key={item.id} className={`highlight-item kind-${item.kind}`}>
-              <span className="status-tag accent">{highlightKindLabel(item.kind)}</span>
-              <p>{item.text}</p>
-            </article>
-          ))}
-        </div>
+        <>
+          <div className="highlight-chip-row">
+            {groups.map((group) => (
+              <span key={group.kind} className={`status-tag accent subtle-${group.kind}`}>
+                {highlightKindLabel(group.kind)} {group.items.length}
+              </span>
+            ))}
+          </div>
+          {props.compact ? (
+            <div className="highlight-list">
+              {flatItems.slice(0, 3).map((item) => (
+                <article key={item.id} className={`highlight-item kind-${item.kind}`}>
+                  <div className="highlight-item-head">
+                    <span className="status-tag accent">{highlightKindLabel(item.kind)}</span>
+                    <span className="highlight-time mono-text">{formatCueTime(item.startMs)}</span>
+                  </div>
+                  <p>{highlightText(item.text, props.meetingTerms)}</p>
+                </article>
+              ))}
+            </div>
+          ) : (
+            <div className="highlight-groups">
+              {groups.map((group) => (
+                <section key={group.kind} className="highlight-group">
+                  <div className="section-head">
+                    <strong>{highlightKindLabel(group.kind)}</strong>
+                    <span className="mono-text">{group.items.length}</span>
+                  </div>
+                  <div className="highlight-list">
+                    {group.items.map((item) => (
+                      <article key={item.id} className={`highlight-item kind-${item.kind}`}>
+                        <div className="highlight-item-head">
+                          <span className="highlight-time mono-text">{formatCueTime(item.startMs)}</span>
+                        </div>
+                        <p>{highlightText(item.text, props.meetingTerms)}</p>
+                      </article>
+                    ))}
+                  </div>
+                </section>
+              ))}
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -1698,6 +1758,7 @@ function HighlightsPanel(props: {
 function SummaryPanel(props: {
   detail: MeetingDetail | null;
   recording: RecordingSnapshot;
+  meetingTerms: string[];
   qaInput: string;
   asking: boolean;
   onQaInputChange: (value: string) => void;
@@ -1707,11 +1768,7 @@ function SummaryPanel(props: {
   const summaryStatus = props.detail?.session.summaryStatus ?? "none";
   const stale = summaryNeedsRefresh(props.detail);
   const statusNode =
-    summaryStatus === "generating" ? (
-      <span className="summary-status summary-status-loading">
-        <LoadingDots label="纪要生成中" />
-      </span>
-    ) : summaryStatus === "error" ? (
+    summaryStatus === "error" ? (
       <span className="summary-status summary-status-error">失败</span>
     ) : summaryStatus === "none" ? (
       <span className="summary-status">未生成</span>
@@ -1749,10 +1806,19 @@ function SummaryPanel(props: {
         {!props.detail ? (
           <p>先从左侧选择一场会议。</p>
         ) : props.detail.session.summaryStatus === "generating" ? (
-          <p>AI 正在根据全文整理纪要，请稍候，不需要重复点击。</p>
+          <p>AI 正在根据全文整理纪要，请稍候。</p>
         ) : props.detail.summary ? (
           <>
-            <p>{props.detail.summary.overview}</p>
+            {props.meetingTerms.length > 0 ? (
+              <div className="term-strip subtle">
+                {props.meetingTerms.slice(0, 6).map((term) => (
+                  <span key={term} className="status-tag term-chip">
+                    {term}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            <p>{highlightText(props.detail.summary.overview, props.meetingTerms)}</p>
             <p className="muted">
               该纪要基于第 {props.detail.summary.sourceSegmentSeq} 段生成，
               {props.detail.summary.generatedWhileStatus === "completed" ? "生成时会议已结束。" : "生成时会议仍在进行或暂停中。"}
@@ -1761,15 +1827,25 @@ function SummaryPanel(props: {
             <strong>关键结论</strong>
             <ul>
               {props.detail.summary.bulletPoints.map((item) => (
-                <li key={item}>{item}</li>
+                <li key={item}>{highlightText(item, props.meetingTerms)}</li>
               ))}
             </ul>
             <strong>待办事项</strong>
             <ul>
               {props.detail.summary.actionItems.map((item) => (
-                <li key={item}>{item}</li>
+                <li key={item}>{highlightText(item, props.meetingTerms)}</li>
               ))}
             </ul>
+            {props.detail.summary.risks.length > 0 ? (
+              <>
+                <strong>风险与待确认</strong>
+                <ul>
+                  {props.detail.summary.risks.map((item) => (
+                    <li key={item}>{highlightText(item, props.meetingTerms)}</li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
             <div className="qa-section">
               <div className="section-head">
                 <strong>会议问答</strong>
@@ -1778,8 +1854,8 @@ function SummaryPanel(props: {
               <div className="qa-list">
                 {props.detail.qaItems.map((item) => (
                   <article key={item.id} className="qa-item">
-                    <p className="qa-question">问：{item.question}</p>
-                    <p className="qa-answer">答：{item.answer}</p>
+                    <p className="qa-question">问：{highlightText(item.question, props.meetingTerms)}</p>
+                    <p className="qa-answer">答：{highlightText(item.answer, props.meetingTerms)}</p>
                   </article>
                 ))}
               </div>
