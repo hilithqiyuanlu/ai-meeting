@@ -34,6 +34,7 @@ export class MeetingService {
     partialText: "",
     audioState: "unknown",
     inputLevel: 0,
+    processedInputLevel: 0,
     lastAudioAt: null,
     lastTranscriptAt: null,
     successfulSegments: 0,
@@ -43,10 +44,16 @@ export class MeetingService {
     consecutiveAsrFailures: 0,
     consecutiveLowQualitySegments: 0,
     latencyMode: "balanced",
+    audioProcessingBackend: "none",
+    voiceProcessingActive: false,
     currentLatencyMs: null,
     lastOverlapAt: null,
     inputQuality: "low",
     lastAudioIssues: [],
+    vadTriggerCount: 0,
+    skippedSilenceSegments: 0,
+    lowQualitySegments: 0,
+    stitchSuppressedSegments: 0,
     errorMessage: null
   };
 
@@ -363,11 +370,17 @@ export class MeetingService {
         quality: TranscriptSegment["quality"];
         overlapDetected: boolean;
         audioIssues: TranscriptSegment["audioIssues"];
+        processedInputLevel: number;
       }) => {
         const nextSpeech =
           payload.kind === "speech"
             ? stitchTranscript(this.lastSpeechText, payload.text)
             : { text: payload.text, overlapChars: payload.overlapChars };
+
+        this.recording = {
+          ...this.recording,
+          processedInputLevel: payload.processedInputLevel
+        };
 
         const segment = this.db.appendTranscriptSegment({
           sessionId,
@@ -400,6 +413,13 @@ export class MeetingService {
         });
 
         this.bumpRecordingCounters(segment);
+        if (payload.kind === "speech" && payload.text && !nextSpeech.text) {
+          this.recording = {
+            ...this.recording,
+            stitchSuppressedSegments: this.recording.stitchSuppressedSegments + 1
+          };
+          this.emit("recording-state", this.recording);
+        }
         if (segment.kind === "speech" && segment.text) {
           this.lastSpeechText = segment.text;
           this.maybeCreateHighlights(sessionId, segment);
@@ -454,6 +474,8 @@ export class MeetingService {
         lastOverlapAt: segment.overlapDetected ? now : this.recording.lastOverlapAt,
         inputQuality: segment.quality,
         lastAudioIssues: segment.audioIssues,
+        vadTriggerCount: this.recording.vadTriggerCount + 1,
+        lowQualitySegments: this.recording.lowQualitySegments + (segment.quality === "low" ? 1 : 0),
         errorMessage: null
       };
     } else if (segment.kind === "silence") {
@@ -462,7 +484,9 @@ export class MeetingService {
         silentSegments: this.recording.silentSegments + 1,
         currentLatencyMs: segment.latencyMs,
         inputQuality: "low",
-        lastAudioIssues: segment.audioIssues
+        lastAudioIssues: segment.audioIssues,
+        vadTriggerCount: this.recording.vadTriggerCount + 1,
+        skippedSilenceSegments: this.recording.skippedSilenceSegments + 1
       };
     } else if (segment.kind === "unclear") {
       this.recording = {
@@ -473,7 +497,9 @@ export class MeetingService {
         consecutiveLowQualitySegments: this.recording.consecutiveLowQualitySegments + 1,
         currentLatencyMs: segment.latencyMs,
         inputQuality: "low",
-        lastAudioIssues: segment.audioIssues
+        lastAudioIssues: segment.audioIssues,
+        vadTriggerCount: this.recording.vadTriggerCount + 1,
+        lowQualitySegments: this.recording.lowQualitySegments + 1
       };
     } else {
       this.recording = {
@@ -484,6 +510,8 @@ export class MeetingService {
         currentLatencyMs: segment.latencyMs,
         inputQuality: "low",
         lastAudioIssues: segment.audioIssues,
+        vadTriggerCount: this.recording.vadTriggerCount + 1,
+        lowQualitySegments: this.recording.lowQualitySegments + 1,
         errorMessage: segment.note
       };
     }
@@ -539,6 +567,7 @@ export class MeetingService {
       partialText: "",
       audioState: "unknown",
       inputLevel: 0,
+      processedInputLevel: 0,
       lastAudioAt: null,
       lastTranscriptAt: null,
       successfulSegments: 0,
@@ -548,10 +577,16 @@ export class MeetingService {
       consecutiveAsrFailures: 0,
       consecutiveLowQualitySegments: 0,
       latencyMode: this.db.getProviderConfig().asr.latencyMode,
+      audioProcessingBackend: this.db.getProviderConfig().asr.audioProcessingBackend,
+      voiceProcessingActive: this.db.getProviderConfig().asr.audioProcessingBackend !== "none",
       currentLatencyMs: null,
       lastOverlapAt: null,
       inputQuality: "low",
       lastAudioIssues: [],
+      vadTriggerCount: 0,
+      skippedSilenceSegments: 0,
+      lowQualitySegments: 0,
+      stitchSuppressedSegments: 0,
       errorMessage: null
     };
   }
@@ -581,7 +616,8 @@ export class MeetingService {
                 aecMode: providerConfig.asr.aecMode,
                 noiseSuppressionMode: providerConfig.asr.noiseSuppressionMode,
                 autoGainMode: providerConfig.asr.autoGainMode,
-                overlapDetectionEnabled: providerConfig.asr.overlapDetectionEnabled
+                overlapDetectionEnabled: providerConfig.asr.overlapDetectionEnabled,
+                audioProcessingBackend: providerConfig.asr.audioProcessingBackend
               }
             },
             this.buildAsrCallbacks(sessionId)
@@ -610,7 +646,9 @@ export class MeetingService {
       activeSessionId: sessionId,
       deviceId,
       deviceName,
-      latencyMode: providerConfig.asr.latencyMode
+      latencyMode: providerConfig.asr.latencyMode,
+      audioProcessingBackend: providerConfig.asr.audioProcessingBackend,
+      voiceProcessingActive: providerConfig.asr.audioProcessingBackend !== "none"
     };
   }
 
@@ -632,6 +670,7 @@ export class MeetingService {
       partialText: "",
       audioState: "unknown",
       inputLevel: 0,
+      processedInputLevel: 0,
       lastAudioAt: null,
       lastTranscriptAt: null,
       successfulSegments: 0,
@@ -641,10 +680,16 @@ export class MeetingService {
       consecutiveAsrFailures: 0,
       consecutiveLowQualitySegments: 0,
       latencyMode: this.db.getProviderConfig().asr.latencyMode,
+      audioProcessingBackend: this.db.getProviderConfig().asr.audioProcessingBackend,
+      voiceProcessingActive: this.db.getProviderConfig().asr.audioProcessingBackend !== "none",
       currentLatencyMs: null,
       lastOverlapAt: null,
       inputQuality: "low",
       lastAudioIssues: [],
+      vadTriggerCount: 0,
+      skippedSilenceSegments: 0,
+      lowQualitySegments: 0,
+      stitchSuppressedSegments: 0,
       errorMessage: null
     };
   }

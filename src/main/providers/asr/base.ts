@@ -15,6 +15,7 @@ export interface AsrProviderCallbacks {
     quality: TranscriptQuality;
     overlapDetected: boolean;
     audioIssues: AudioIssue[];
+    processedInputLevel: number;
   }) => Promise<void>;
   onStatus: (status: string) => void;
   onError: (error: Error) => void;

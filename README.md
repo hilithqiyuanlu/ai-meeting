@@ -1,4 +1,4 @@
-# AI Meeting v0.4.3
+# AI Meeting v0.4.4
 
 macOS 桌面会议副驾：默认麦克风优先，强调会中 2-5 秒内可用的实时字幕、质量提示与重点提醒；支持本地 SenseVoice 转写，也支持可选云端 ASR；AI 纪要支持会中手动生成，不需要暂停录制。
 
@@ -48,11 +48,13 @@ pnpm run swift:build
 
 - 在设置页切换到“本地 SenseVoice”后，可直接下载模型到应用数据目录。
 - 本地 ASR 默认支持：自动、普通话、粤语、英语、日语、韩语。
-- 转写在本机完成；`v0.4.3` 新增 VAD 驱动分段、基础噪声抑制、自动增益、质量等级与重叠检测。
+- 转写在本机完成；`v0.4.4` 新增 VAD 驱动分段、启发式音频前处理、质量等级与重叠检测。
 - 会中可看到低置信、重叠、回声/噪声/低音量等质量提示。
 - 新增实时文本后处理增强：更稳的尾段收尾、重复/重叠压制、术语标准化。
 - 历史会议支持双击改名，默认麦克风会议标题为日期+时间。
 - 会中重点提醒现在支持分组展示，实时字幕、重点提醒和会议纪要支持术语高亮。
+- benchmark 支持更完整的 manifest 字段与回放模式，可对 `v0.4.3` 基线做场景化对比。
+- 当前前处理后端只包含 `heuristic-apm` 与 `none`，尚未接入系统级 voice processing / WebRTC APM。
 - 会议纪要和会议问答仍使用你配置的 LLM。
 - 如果模型不存在，开始录制前需要先完成下载。
 
@@ -74,7 +76,7 @@ pnpm run swift:build
 ```bash
 pnpm run typecheck
 pnpm test
-pnpm benchmark:asr -- benchmarks/manifest.json
+pnpm benchmark:asr -- benchmarks/manifest.example.json
 pnpm run build
 pnpm run swift:build
 swift/SystemAudioCaptureHelper/.build/release/SystemAudioCaptureHelper devices

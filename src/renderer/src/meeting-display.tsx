@@ -1,23 +1,12 @@
 import type { ReactNode } from "react";
 import type { MeetingDetail } from "@shared/types";
+import registry from "@shared/term-registry.json";
 
-const KNOWN_TERMS = [
-  "AI Meeting",
-  "SenseVoice",
-  "Ollama",
-  "BlackHole",
-  "Codex",
-  "GPT",
-  "Qwen",
-  "Gemini",
-  "OpenAI",
-  "VAD",
-  "AEC",
-  "ASR",
+const KNOWN_TERMS = (registry as Array<{ canonical: string }>).map((item) => item.canonical).concat([
   "API",
   "Full",
   "Design Proctor"
-];
+]);
 
 const TOKEN_STOPWORDS = new Set([
   "the",

@@ -35,7 +35,8 @@ const defaultProviderConfig: ProviderConfig = {
     aecMode: "auto",
     noiseSuppressionMode: "auto",
     autoGainMode: "auto",
-    overlapDetectionEnabled: true
+    overlapDetectionEnabled: true,
+    audioProcessingBackend: "heuristic-apm"
   },
   llm: {
     providerId: "gemini-openai-compatible",
@@ -53,7 +54,8 @@ const defaultPreferences: AppPreferences = {
   exportDirectory: null,
   exportIncludePlaceholders: true,
   captureMode: "microphone",
-  onboardingCompleted: false
+  onboardingCompleted: false,
+  uiLanguage: "zh-CN"
 };
 
 type SessionRow = Omit<MeetingSession, "durationMs"> & { duration_ms: number };
@@ -633,8 +635,11 @@ export class AppDatabase {
       merged.asr.chunkMs = merged.asr.chunkMs || 8000;
       merged.asr.vadEnabled = merged.asr.vadEnabled ?? true;
       merged.asr.overlapDetectionEnabled = merged.asr.overlapDetectionEnabled ?? true;
+      merged.asr.audioProcessingBackend =
+        merged.asr.audioProcessingBackend === "none" ? "none" : "heuristic-apm";
     } else {
       merged.asr.runtime = "cloud";
+      merged.asr.audioProcessingBackend = "none";
     }
 
     return merged;

@@ -8,8 +8,10 @@ export type CaptureMode = "microphone" | "system-audio";
 export type AsrRuntime = "cloud" | "sherpa-onnx";
 export type LocalAsrLanguage = "auto" | "zh" | "yue" | "en" | "ja" | "ko";
 export type LocalAsrModelState = "not-downloaded" | "downloading" | "ready" | "error";
+export type UiLanguage = "zh-CN" | "en-US";
 export type AsrLatencyMode = "fast" | "balanced" | "accurate";
 export type AudioProcessingMode = "auto" | "off" | "on";
+export type AudioProcessingBackend = "none" | "heuristic-apm";
 export type TranscriptQuality = "high" | "medium" | "low";
 export type AudioIssue = "echo" | "noise" | "low-level" | "clipping";
 export type HighlightKind = "decision" | "action" | "risk" | "follow-up";
@@ -106,6 +108,7 @@ export interface ProviderConfig {
     noiseSuppressionMode: AudioProcessingMode;
     autoGainMode: AudioProcessingMode;
     overlapDetectionEnabled: boolean;
+    audioProcessingBackend: AudioProcessingBackend;
   };
   llm: {
     providerId: LlmProviderId;
@@ -124,6 +127,7 @@ export interface AppPreferences {
   exportIncludePlaceholders: boolean;
   captureMode: CaptureMode;
   onboardingCompleted: boolean;
+  uiLanguage: UiLanguage;
 }
 
 export interface AudioInputDevice {
@@ -150,6 +154,7 @@ export interface EnvironmentStatus {
   microphoneDevices: AudioInputDevice[];
   systemAudioDevices: AudioInputDevice[];
   voiceProcessingAvailable: boolean;
+  preferredAudioProcessingBackend: AudioProcessingBackend;
   helperBuildHint: string;
   localAsrSupported: boolean;
   localModelState: LocalAsrModelState;
@@ -176,6 +181,7 @@ export interface RecordingSnapshot {
   partialText: string;
   audioState: AudioActivityState;
   inputLevel: number;
+  processedInputLevel: number;
   lastAudioAt: string | null;
   lastTranscriptAt: string | null;
   successfulSegments: number;
@@ -185,10 +191,16 @@ export interface RecordingSnapshot {
   consecutiveAsrFailures: number;
   consecutiveLowQualitySegments: number;
   latencyMode: AsrLatencyMode;
+  audioProcessingBackend: AudioProcessingBackend;
+  voiceProcessingActive: boolean;
   currentLatencyMs: number | null;
   lastOverlapAt: string | null;
   inputQuality: TranscriptQuality;
   lastAudioIssues: AudioIssue[];
+  vadTriggerCount: number;
+  skippedSilenceSegments: number;
+  lowQualitySegments: number;
+  stitchSuppressedSegments: number;
   errorMessage: string | null;
 }
 

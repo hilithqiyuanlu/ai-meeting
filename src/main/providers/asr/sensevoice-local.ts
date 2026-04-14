@@ -27,6 +27,7 @@ type SenseVoiceLocalProviderConfig = {
     | "noiseSuppressionMode"
     | "autoGainMode"
     | "overlapDetectionEnabled"
+    | "audioProcessingBackend"
   >;
 };
 
@@ -166,7 +167,9 @@ export class SenseVoiceLocalProvider implements AsrProvider {
       const prepared = prepareAudioChunk(chunk, {
         noiseSuppressionMode: this.config.asr.noiseSuppressionMode,
         autoGainMode: this.config.asr.autoGainMode,
-        overlapDetectionEnabled: this.config.asr.overlapDetectionEnabled
+        overlapDetectionEnabled: this.config.asr.overlapDetectionEnabled,
+        aecMode: this.config.asr.aecMode,
+        audioProcessingBackend: this.config.asr.audioProcessingBackend
       });
 
       const decodeStartedAt = Date.now();
@@ -209,7 +212,8 @@ export class SenseVoiceLocalProvider implements AsrProvider {
           latencyMs,
           quality,
           overlapDetected: prepared.overlapDetected,
-          audioIssues: prepared.audioIssues
+          audioIssues: prepared.audioIssues,
+          processedInputLevel: prepared.metrics.rms
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -225,7 +229,8 @@ export class SenseVoiceLocalProvider implements AsrProvider {
           latencyMs: Date.now() - decodeStartedAt,
           quality: "low",
           overlapDetected: prepared.overlapDetected,
-          audioIssues: prepared.audioIssues
+          audioIssues: prepared.audioIssues,
+          processedInputLevel: prepared.metrics.rms
         });
         this.callbacks.onError(new Error(`SenseVoice 第 ${index + 1} 段识别失败：${message}`));
       } finally {

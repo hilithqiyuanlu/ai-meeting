@@ -43,6 +43,7 @@ export class EnvironmentService {
       microphoneDevices,
       systemAudioDevices,
       voiceProcessingAvailable: false,
+      preferredAudioProcessingBackend: process.platform === "darwin" ? "heuristic-apm" : "none",
       helperBuildHint: "运行 `pnpm swift:build` 以构建 SystemAudioCaptureHelper",
       localAsrSupported: process.platform === "darwin",
       localModelState: localAsr.state,

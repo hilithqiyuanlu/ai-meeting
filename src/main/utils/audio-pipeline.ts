@@ -1,4 +1,4 @@
-import type { AudioIssue, ProviderConfig, TranscriptQuality } from "@shared/types";
+import type { AudioIssue, AudioProcessingBackend, ProviderConfig, TranscriptQuality } from "@shared/types";
 
 export interface AudioMetrics {
   rms: number;
@@ -9,9 +9,11 @@ export interface AudioMetrics {
 
 export interface PreparedAudioChunk {
   pcm: Buffer;
+  rawMetrics: AudioMetrics;
   metrics: AudioMetrics;
   audioIssues: AudioIssue[];
   overlapDetected: boolean;
+  backend: AudioProcessingBackend;
 }
 
 export function pcm16ToFloat32(chunk: Buffer): Float32Array {
@@ -85,12 +87,32 @@ function removeDcOffset(samples: Float32Array): void {
   }
 }
 
+function applyHighPassFilter(samples: Float32Array): void {
+  let previousInput = 0;
+  let previousOutput = 0;
+  const alpha = 0.985;
+  for (let index = 0; index < samples.length; index += 1) {
+    const current = samples[index] ?? 0;
+    const next = current - previousInput + alpha * previousOutput;
+    previousInput = current;
+    previousOutput = next;
+    samples[index] = next;
+  }
+}
+
 function applyNoiseGate(samples: Float32Array, threshold: number): void {
   for (let index = 0; index < samples.length; index += 1) {
     const sample = samples[index] ?? 0;
     if (Math.abs(sample) < threshold) {
       samples[index] = 0;
     }
+  }
+}
+
+function applySoftClipProtection(samples: Float32Array): void {
+  for (let index = 0; index < samples.length; index += 1) {
+    const sample = samples[index] ?? 0;
+    samples[index] = Math.tanh(sample * 1.08);
   }
 }
 
@@ -103,6 +125,14 @@ function applyAutoGain(samples: Float32Array, metrics: AudioMetrics): void {
   const gain = Math.max(0.85, Math.min(3.2, targetRms / metrics.rms));
   for (let index = 0; index < samples.length; index += 1) {
     samples[index] *= gain;
+  }
+}
+
+function applyEchoAttenuation(samples: Float32Array): void {
+  const delay = 160;
+  for (let index = delay; index < samples.length; index += 1) {
+    const delayed = samples[index - delay] ?? 0;
+    samples[index] = samples[index] - delayed * 0.18;
   }
 }
 
@@ -125,6 +155,14 @@ function detectAudioIssues(metrics: AudioMetrics): AudioIssue[] {
   return issues;
 }
 
+export function selectAudioProcessingBackend(config: Pick<ProviderConfig["asr"], "aecMode" | "noiseSuppressionMode" | "autoGainMode" | "audioProcessingBackend">): AudioProcessingBackend {
+  if (config.aecMode === "off" && config.noiseSuppressionMode === "off" && config.autoGainMode === "off") {
+    return "none";
+  }
+
+  return "heuristic-apm";
+}
+
 export function detectOverlap(metrics: AudioMetrics, issues: AudioIssue[], overlapDetectionEnabled: boolean): boolean {
   if (!overlapDetectionEnabled) {
     return false;
@@ -141,12 +179,21 @@ export function prepareAudioChunk(
   chunk: Buffer,
   processingConfig: Pick<
     ProviderConfig["asr"],
-    "noiseSuppressionMode" | "autoGainMode" | "overlapDetectionEnabled"
+    "noiseSuppressionMode" | "autoGainMode" | "overlapDetectionEnabled" | "aecMode" | "audioProcessingBackend"
   >
 ): PreparedAudioChunk {
   const samples = pcm16ToFloat32(chunk);
   removeDcOffset(samples);
   const rawMetrics = analyzeSamples(samples);
+  const backend = selectAudioProcessingBackend(processingConfig);
+
+  if (backend !== "none") {
+    applyHighPassFilter(samples);
+    applySoftClipProtection(samples);
+  }
+  if (processingConfig.aecMode !== "off" && backend !== "none") {
+    applyEchoAttenuation(samples);
+  }
 
   if (processingConfig.noiseSuppressionMode !== "off") {
     const gate = Math.max(0.004, rawMetrics.rms * 0.22);
@@ -162,9 +209,11 @@ export function prepareAudioChunk(
 
   return {
     pcm: float32ToPcm16(samples),
+    rawMetrics,
     metrics,
     audioIssues,
-    overlapDetected
+    overlapDetected,
+    backend
   };
 }
 

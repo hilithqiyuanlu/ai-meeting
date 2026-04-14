@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import type { WheelEvent } from "react";
 import type {
   AppPreferences,
   BootstrapState,
@@ -7,17 +8,523 @@ import type {
   MeetingDetail,
   MeetingSession,
   ProviderConfig,
-  RecordingSnapshot
+  RecordingSnapshot,
+  UiLanguage
 } from "@shared/types";
 import { detectMeetingTerms, groupMeetingHighlights, highlightText } from "./meeting-display";
 
 type TabId = "capture" | "settings";
 
-function formatCompactDateTime(value: string | null): string {
+const copy = {
+  "zh-CN": {
+    loading: "正在加载工作台...",
+    startupFailed: "启动失败",
+    appFailed: "应用没有正确加载",
+    restartHint: "请重启应用，如果仍然失败，把终端错误发给我。",
+    workspace: "设置中心",
+    searchPlaceholder: "搜索会议（即将支持）",
+    realtimeRecord: "实时记录",
+    waiting: "待命",
+    settings: "系统设置",
+    settingsTitle: "全局设置",
+    language: "界面语言",
+    languageZh: "中文",
+    languageEn: "English",
+    capture: "采集模式",
+    microphoneMode: "麦克风模式",
+    systemAudioMode: "系统音频模式",
+    asr: "转写服务",
+    localSenseVoice: "本地 SenseVoice",
+    llm: "纪要模型",
+    localOllama: "Ollama 本地",
+    general: "通用",
+    workspacePrefs: "本地偏好与权限",
+    skipGuide: "跳过首次引导",
+    exportPlaceholders: "导出 TXT 时保留静音/失败占位提示",
+    requestMic: "请求麦克风权限",
+    refreshDevices: "重新扫描设备",
+    saveSettings: "保存设置",
+    saving: "保存中...",
+    finishGuide: "引导完成，返回工作台",
+    transcript: "实时字幕流",
+    highlights: "重点提醒",
+    summary: "会议纪要",
+    controls: "录制控制",
+    askPlaceholder: "继续追问这场会议，例如：老师提出的具体要求是什么？",
+    ask: "提问",
+    generating: "纪要生成中",
+    generate: "生成",
+    regenerate: "重新生成纪要",
+    noSummary: "还没有纪要。有转写后即可生成，会议进行中也可以手动刷新。生成完成后，你也可以继续对会议内容发起多轮提问。",
+    selectMeeting: "先从左侧选择一场会议。",
+    chooseMeeting: "选择一场会议",
+    transcriptEmpty: "中间区域会展示当前会议的转写全文与片段状态。",
+    noHighlights: "当前还没有满足保守阈值的提醒。系统只会在高置信度、非重叠片段上提示重点。",
+    processingSummary: "AI 正在根据全文整理纪要，请稍候。",
+    qa: "会议问答",
+    keyPoints: "关键结论",
+    actionItems: "待办事项",
+    risks: "风险与待确认",
+    history: "历史会议",
+    noHistory: "暂无会议记录",
+    startMeetingHint: "开始一场新会议后，记录会出现在这里。",
+    systemPreferences: "设置中心",
+    runtime: "运行状态",
+    systemStatus: "System Status",
+    low: "低",
+    medium: "中",
+    high: "高",
+    capturing: "检测到有效音频",
+    nearSilence: "当前接近静音",
+    noSignal: "设备存在但没有声音",
+    deviceError: "设备或采集异常",
+    waitingAudio: "等待开始录音",
+    fast: "快速",
+    balanced: "平衡",
+    accurate: "高精度",
+    readyNew: "准备开始新会议",
+    starting: "正在启动录制",
+    recording: "录制进行中",
+    paused: "会议已暂停",
+    stopping: "正在停止采集",
+    processing: "正在整理最后几段",
+    error: "录制异常",
+    completed: "已完成",
+    idle: "待命",
+    startNewMeeting: "开始新会议",
+    stopMeeting: "结束会议",
+    pause: "暂停",
+    resume: "继续",
+    exportMd: "导出 MD",
+    exportTxt: "导出 TXT",
+    exportFailed: "导出失败",
+    startSuccess: "录制已启动",
+    pauseSuccess: "会议已暂停",
+    resumeSuccess: "会议已继续录制",
+    summaryFailed: "生成 AI 纪要失败",
+    qaFailed: "会议问答失败",
+    deleteSuccess: "会议记录已删除",
+    modelDownloadFailed: "模型下载失败",
+    modelDeleteFailed: "删除模型失败",
+    modelImportFailed: "导入模型失败",
+    enabled: "已启用",
+    disabled: "已关闭",
+    partialFallback: "等待稳定语音输入...",
+    highlightDecision: "决策",
+    highlightAction: "待办",
+    highlightRisk: "风险",
+    highlightFollowUp: "待确认",
+    modelState: "模型状态",
+    runtimeLabel: "运行时",
+    recognitionLanguage: "识别语言",
+    latencyStrategy: "延迟策略",
+    chunkFallback: "兜底分段时长 (ms)",
+    vad: "VAD",
+    overlapDetection: "重叠检测",
+    enableVad: "启用 VAD 驱动分段",
+    enableOverlapDetection: "启用重叠发言检测",
+    vadThreshold: "VAD 阈值",
+    tailBuffer: "尾部缓冲 (ms)",
+    aecStrategy: "AEC 策略",
+    noiseSuppression: "噪声抑制",
+    autoGain: "自动增益",
+    auto: "自动",
+    on: "开启",
+    off: "关闭",
+    forceOn: "强制开启",
+    modelPath: "模型路径",
+    modelError: "模型错误",
+    downloadModel: "下载模型",
+    redownloadModel: "重新下载模型",
+    downloadingModel: "下载中...",
+    deleteModel: "删除模型",
+    importModelDir: "导入模型目录",
+    endpoint: "Endpoint",
+    apiKey: "API Key",
+    model: "Model",
+    microphonePermission: "权限状态",
+    blackhole: "BlackHole",
+    detected: "已检测到",
+    notDetected: "未检测到",
+    deleteMeeting: "删除会议记录",
+    deleteTitle: "确认删除这条会议记录？",
+    deleteTime: "会议时间：",
+    deleteDesc: "删除后将同时移除全文转写、AI 纪要与问答记录，此操作不可撤销。",
+    cancel: "取消",
+    confirmDelete: "确认删除",
+    deleting: "删除中...",
+    justNow: "刚刚",
+    secondsAgo: "秒前",
+    minutesAgo: "分钟前",
+    none: "暂无",
+    speechType: "类型",
+    level: "电平",
+    latency: "延迟",
+    processingMs: "处理",
+    dedupe: "去重",
+    questionPrefix: "问：",
+    answerPrefix: "答：",
+    noBody: "此段没有可用正文。",
+    close: "关闭",
+    noMeaningfulBody: "此段没有可用正文。",
+    itemUnit: "条",
+    segmentUnit: "段",
+    settingsSaved: "设置已保存",
+    stoppedSuccess: "录制已停止",
+    summarySuccess: "AI 纪要已生成",
+    exportedTo: "已导出到",
+    startFailed: "开始录制失败",
+    stopFailed: "停止录制失败",
+    pauseFailed: "暂停失败",
+    resumeFailed: "继续录制失败",
+    deleteFailed: "删除失败",
+    renameFailed: "重命名失败",
+    noMicrophoneDevice: "没有可用麦克风设备。",
+    noSystemAudioDevice: "没有可用系统音频输入设备。",
+    micGranted: "麦克风权限已授权",
+    micDenied: "麦克风权限未授权",
+    statusLabel: "状态",
+    inputStatusLabel: "输入状态",
+    realtimeLatency: "实时延迟",
+    inputQuality: "输入质量",
+    lastAudio: "最近有声",
+    lastTranscript: "最近转写成功",
+    riskSegments: "风险片段",
+    liveLevel: "实时电平",
+    lowQualityShort: "低质",
+    failedShort: "失败",
+    recentOverlap: "最近检测到重叠发言",
+    recentError: "最近错误",
+    consecutiveFailures: "连续失败段数",
+    consecutiveLowQuality: "连续低质量片段",
+    generatedFromSegment: "该纪要基于第 {seq} 段生成，{status}",
+    generatedWhenCompleted: "生成时会议已结束。",
+    generatedWhenLive: "生成时会议仍在进行或暂停中。",
+    staleSummary: "会议又新增了转写内容，当前纪要不是最新版本，可以手动重新生成。",
+    processingMoreComplete: "会议正在整理最后几段，完成后再生成纪要会更完整。",
+    saveRenameHint: "回车保存，Esc 取消",
+    permissionGranted: "已授权",
+    permissionDenied: "未授权",
+    permissionRestricted: "受限制",
+    permissionNotDetermined: "未确定",
+    permissionUnknown: "未知",
+    modelStateNotDownloaded: "未下载",
+    modelStateDownloading: "下载中",
+    modelStateReady: "已就绪",
+    modelStateError: "异常",
+    languageAuto: "自动",
+    languageMandarin: "普通话",
+    languageCantonese: "粤语",
+    languageEnglish: "英语",
+    languageJapanese: "日语",
+    languageKorean: "韩语",
+    qaUpdated: "会议问答已更新",
+    modelDownloaded: "SenseVoice 模型已下载",
+    modelDeleted: "SenseVoice 模型已删除",
+    modelImported: "SenseVoice 模型已导入",
+    importCanceled: "已取消导入",
+    meetingTitleUpdated: "会议名称已更新",
+    systemAudioPrefix: "系统音频",
+    bridgeMissing: "应用桥接接口未加载，请重启应用。",
+    overlapDetected: "重叠发言",
+    issueEcho: "回声",
+    issueNoise: "噪声",
+    issueLowLevel: "音量低",
+    issueClipping: "过载",
+    audioBackend: "前处理后端",
+    processingStatus: "前处理状态",
+    backendHeuristic: "启发式 APM",
+    backendNone: "未启用",
+    processingActive: "前处理已启用",
+    processingInactive: "前处理未启用",
+    rawInputLevel: "原始电平",
+    processedInputLevel: "处理后电平",
+    vadTriggers: "VAD 触发",
+    skippedSilence: "静音跳过",
+    totalLowQualitySegments: "低质量累计",
+    stitchSuppressed: "去重压制",
+    processingNote: "当前仅实现启发式音频前处理，不包含系统级 voice processing。",
+    preferredBackend: "推荐后端"
+  },
+  "en-US": {
+    loading: "Loading workspace...",
+    startupFailed: "Startup failed",
+    appFailed: "The app did not load correctly",
+    restartHint: "Restart the app. If it still fails, share the terminal error.",
+    workspace: "Settings",
+    searchPlaceholder: "Search meetings (coming soon)",
+    realtimeRecord: "Realtime Record",
+    waiting: "Standby",
+    settings: "Settings",
+    settingsTitle: "General",
+    language: "UI Language",
+    languageZh: "Chinese",
+    languageEn: "English",
+    capture: "Capture Mode",
+    microphoneMode: "Microphone",
+    systemAudioMode: "System Audio",
+    asr: "Transcription",
+    localSenseVoice: "Local SenseVoice",
+    llm: "Summary Model",
+    localOllama: "Local Ollama",
+    general: "General",
+    workspacePrefs: "Local Preferences & Permissions",
+    skipGuide: "Skip onboarding",
+    exportPlaceholders: "Keep silence/error placeholders in TXT export",
+    requestMic: "Request microphone access",
+    refreshDevices: "Rescan devices",
+    saveSettings: "Save settings",
+    saving: "Saving...",
+    finishGuide: "Finish onboarding",
+    transcript: "Realtime Transcript",
+    highlights: "Highlights",
+    summary: "Meeting Summary",
+    controls: "Recording Controls",
+    askPlaceholder: "Ask a follow-up question about this meeting...",
+    ask: "Send",
+    generating: "Generating summary",
+    generate: "Generate",
+    regenerate: "Regenerate",
+    noSummary: "No summary yet. Generate one after transcription becomes available.",
+    selectMeeting: "Choose a meeting from the left.",
+    chooseMeeting: "Choose a meeting",
+    transcriptEmpty: "The center area shows transcript segments and status.",
+    noHighlights: "No conservative high-confidence highlights yet.",
+    processingSummary: "AI is organizing the full transcript, please wait.",
+    qa: "Meeting Q&A",
+    keyPoints: "Key Points",
+    actionItems: "Action Items",
+    risks: "Risks & Follow-ups",
+    history: "History",
+    noHistory: "No meetings yet",
+    startMeetingHint: "Your meetings will appear here after you start one.",
+    systemPreferences: "Settings",
+    runtime: "Runtime Status",
+    systemStatus: "System Status",
+    low: "Low",
+    medium: "Medium",
+    high: "High",
+    capturing: "Capturing audio",
+    nearSilence: "Near silence",
+    noSignal: "No signal",
+    deviceError: "Device error",
+    waitingAudio: "Waiting to start",
+    fast: "Fast",
+    balanced: "Balanced",
+    accurate: "Accurate",
+    readyNew: "Ready for a new meeting",
+    starting: "Starting",
+    recording: "Recording",
+    paused: "Paused",
+    stopping: "Stopping",
+    processing: "Finalizing",
+    error: "Error",
+    completed: "Completed",
+    idle: "Idle",
+    startNewMeeting: "Start Meeting",
+    stopMeeting: "Stop Meeting",
+    pause: "Pause",
+    resume: "Resume",
+    exportMd: "Export MD",
+    exportTxt: "Export TXT",
+    exportFailed: "Export failed",
+    startSuccess: "Recording started",
+    pauseSuccess: "Meeting paused",
+    resumeSuccess: "Meeting resumed",
+    summaryFailed: "Summary generation failed",
+    qaFailed: "Q&A failed",
+    deleteSuccess: "Meeting deleted",
+    modelDownloadFailed: "Model download failed",
+    modelDeleteFailed: "Model deletion failed",
+    modelImportFailed: "Model import failed",
+    enabled: "Enabled",
+    disabled: "Disabled",
+    partialFallback: "Waiting for stable speech...",
+    highlightDecision: "Decision",
+    highlightAction: "Action",
+    highlightRisk: "Risk",
+    highlightFollowUp: "Follow-up",
+    modelState: "Model State",
+    runtimeLabel: "Runtime",
+    recognitionLanguage: "Recognition Language",
+    latencyStrategy: "Latency Strategy",
+    chunkFallback: "Fallback Chunk (ms)",
+    vad: "VAD",
+    overlapDetection: "Overlap Detection",
+    enableVad: "Enable VAD-driven segmentation",
+    enableOverlapDetection: "Enable overlap detection",
+    vadThreshold: "VAD Threshold",
+    tailBuffer: "Tail Buffer (ms)",
+    aecStrategy: "AEC Strategy",
+    noiseSuppression: "Noise Suppression",
+    autoGain: "Auto Gain",
+    auto: "Auto",
+    on: "On",
+    off: "Off",
+    forceOn: "Force On",
+    modelPath: "Model Path",
+    modelError: "Model Error",
+    downloadModel: "Download Model",
+    redownloadModel: "Redownload Model",
+    downloadingModel: "Downloading...",
+    deleteModel: "Delete Model",
+    importModelDir: "Import Model Folder",
+    endpoint: "Endpoint",
+    apiKey: "API Key",
+    model: "Model",
+    microphonePermission: "Permission",
+    blackhole: "BlackHole",
+    detected: "Detected",
+    notDetected: "Not detected",
+    deleteMeeting: "Delete Meeting",
+    deleteTitle: "Delete this meeting?",
+    deleteTime: "Meeting time:",
+    deleteDesc: "This deletes the transcript, AI summary and Q&A history.",
+    cancel: "Cancel",
+    confirmDelete: "Delete",
+    deleting: "Deleting...",
+    justNow: "Just now",
+    secondsAgo: "s ago",
+    minutesAgo: "m ago",
+    none: "None",
+    speechType: "Type",
+    level: "Level",
+    latency: "Latency",
+    processingMs: "Processing",
+    dedupe: "Dedupe",
+    questionPrefix: "Q:",
+    answerPrefix: "A:",
+    noBody: "No usable text for this segment.",
+    close: "Close",
+    noMeaningfulBody: "No usable text for this segment.",
+    itemUnit: "items",
+    segmentUnit: "segments",
+    settingsSaved: "Settings saved",
+    stoppedSuccess: "Recording stopped",
+    summarySuccess: "AI summary generated",
+    exportedTo: "Exported to",
+    startFailed: "Failed to start recording",
+    stopFailed: "Failed to stop recording",
+    pauseFailed: "Pause failed",
+    resumeFailed: "Resume failed",
+    deleteFailed: "Delete failed",
+    renameFailed: "Rename failed",
+    noMicrophoneDevice: "No microphone device available.",
+    noSystemAudioDevice: "No system audio input available.",
+    micGranted: "Microphone access granted",
+    micDenied: "Microphone access denied",
+    statusLabel: "Status",
+    inputStatusLabel: "Input Status",
+    realtimeLatency: "Realtime Latency",
+    inputQuality: "Input Quality",
+    lastAudio: "Last Audio",
+    lastTranscript: "Last Transcript",
+    riskSegments: "Risk Segments",
+    liveLevel: "Live Level",
+    lowQualityShort: "Low quality",
+    failedShort: "Failed",
+    recentOverlap: "Recent overlap detected",
+    recentError: "Recent error",
+    consecutiveFailures: "Consecutive failures",
+    consecutiveLowQuality: "Consecutive low-quality segments",
+    generatedFromSegment: "Generated from segment {seq}. {status}",
+    generatedWhenCompleted: "The meeting had ended when this was generated.",
+    generatedWhenLive: "The meeting was still live or paused when this was generated.",
+    staleSummary: "New transcript content was added after this summary. Regenerate to refresh it.",
+    processingMoreComplete: "The meeting is finalizing the last segments. Generate again after it completes for a fuller summary.",
+    saveRenameHint: "Enter to save, Esc to cancel",
+    permissionGranted: "Granted",
+    permissionDenied: "Denied",
+    permissionRestricted: "Restricted",
+    permissionNotDetermined: "Not determined",
+    permissionUnknown: "Unknown",
+    modelStateNotDownloaded: "Not downloaded",
+    modelStateDownloading: "Downloading",
+    modelStateReady: "Ready",
+    modelStateError: "Error",
+    languageAuto: "Auto",
+    languageMandarin: "Mandarin",
+    languageCantonese: "Cantonese",
+    languageEnglish: "English",
+    languageJapanese: "Japanese",
+    languageKorean: "Korean",
+    qaUpdated: "Meeting Q&A updated",
+    modelDownloaded: "SenseVoice model downloaded",
+    modelDeleted: "SenseVoice model deleted",
+    modelImported: "SenseVoice model imported",
+    importCanceled: "Import canceled",
+    meetingTitleUpdated: "Meeting title updated",
+    systemAudioPrefix: "System Audio",
+    bridgeMissing: "The app bridge did not load. Restart the app.",
+    overlapDetected: "Overlap",
+    issueEcho: "Echo",
+    issueNoise: "Noise",
+    issueLowLevel: "Low level",
+    issueClipping: "Clipping",
+    audioBackend: "Processing Backend",
+    processingStatus: "Processing Status",
+    backendHeuristic: "Heuristic APM",
+    backendNone: "Disabled",
+    processingActive: "Processing active",
+    processingInactive: "Processing inactive",
+    rawInputLevel: "Raw Input",
+    processedInputLevel: "Processed Input",
+    vadTriggers: "VAD Triggers",
+    skippedSilence: "Silence Skips",
+    totalLowQualitySegments: "Low-quality Total",
+    stitchSuppressed: "Dedupe Suppressed",
+    processingNote: "Only heuristic audio preprocessing is implemented in v0.4.4. System voice processing is not wired in.",
+    preferredBackend: "Preferred Backend"
+  }
+} as const;
+
+function t(language: UiLanguage, key: keyof typeof copy["zh-CN"]): string {
+  return copy[language][key];
+}
+
+function countLabel(count: number, unit: "itemUnit" | "segmentUnit", language: UiLanguage): string {
+  return `${count} ${t(language, unit)}`;
+}
+
+function localizedNotice(language: UiLanguage, key: keyof typeof copy["zh-CN"], detail?: string): string {
+  return detail ? `${t(language, key)}: ${detail}` : t(language, key);
+}
+
+function permissionLabel(value: EnvironmentStatus["microphonePermission"], language: UiLanguage): string {
+  switch (value) {
+    case "granted":
+      return t(language, "permissionGranted");
+    case "denied":
+      return t(language, "permissionDenied");
+    case "restricted":
+      return t(language, "permissionRestricted");
+    case "not-determined":
+      return t(language, "permissionNotDetermined");
+    default:
+      return t(language, "permissionUnknown");
+  }
+}
+
+function modelStateLabel(value: EnvironmentStatus["localModelState"], language: UiLanguage): string {
+  switch (value) {
+    case "not-downloaded":
+      return t(language, "modelStateNotDownloaded");
+    case "downloading":
+      return t(language, "modelStateDownloading");
+    case "ready":
+      return t(language, "modelStateReady");
+    case "error":
+      return t(language, "modelStateError");
+    default:
+      return value;
+  }
+}
+
+function formatCompactDateTime(value: string | null, language: UiLanguage = "zh-CN"): string {
   if (!value) {
     return "-";
   }
-  return new Intl.DateTimeFormat("zh-CN", {
+  return new Intl.DateTimeFormat(language, {
     month: "numeric",
     day: "numeric",
     hour: "2-digit",
@@ -33,33 +540,33 @@ function toMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-function formatRelativeStatus(value: string | null): string {
+function formatRelativeStatus(value: string | null, language: UiLanguage): string {
   if (!value) {
-    return "暂无";
+    return t(language, "none");
   }
 
   const deltaSeconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
   if (deltaSeconds < 5) {
-    return "刚刚";
+    return t(language, "justNow");
   }
   if (deltaSeconds < 60) {
-    return `${deltaSeconds} 秒前`;
+    return `${deltaSeconds} ${t(language, "secondsAgo")}`;
   }
-  return `${Math.floor(deltaSeconds / 60)} 分钟前`;
+  return `${Math.floor(deltaSeconds / 60)} ${t(language, "minutesAgo")}`;
 }
 
-function audioStateLabel(state: RecordingSnapshot["audioState"]): string {
+function audioStateLabel(state: RecordingSnapshot["audioState"], language: UiLanguage): string {
   switch (state) {
     case "capturing":
-      return "检测到有效音频";
+      return t(language, "capturing");
     case "near-silence":
-      return "当前接近静音";
+      return t(language, "nearSilence");
     case "no-signal":
-      return "设备存在但没有声音";
+      return t(language, "noSignal");
     case "device-error":
-      return "设备或采集异常";
+      return t(language, "deviceError");
     default:
-      return "等待开始录音";
+      return t(language, "waitingAudio");
   }
 }
 
@@ -67,59 +574,67 @@ function audioLevelPercent(level: number): number {
   return Math.max(2, Math.min(100, Math.round(level * 900)));
 }
 
-function latencyModeLabel(mode: ProviderConfig["asr"]["latencyMode"]): string {
+function latencyModeLabel(mode: ProviderConfig["asr"]["latencyMode"], language: UiLanguage): string {
   switch (mode) {
     case "fast":
-      return "快速";
+      return t(language, "fast");
     case "accurate":
-      return "高精度";
+      return t(language, "accurate");
     default:
-      return "平衡";
+      return t(language, "balanced");
   }
 }
 
-function transcriptQualityLabel(quality: RecordingSnapshot["inputQuality"]): string {
+function transcriptQualityLabel(quality: RecordingSnapshot["inputQuality"], language: UiLanguage): string {
   switch (quality) {
     case "high":
-      return "高";
+      return t(language, "high");
     case "medium":
-      return "中";
+      return t(language, "medium");
     default:
-      return "低";
+      return t(language, "low");
   }
 }
 
-function audioIssueLabel(issue: MeetingDetail["transcriptSegments"][number]["audioIssues"][number]): string {
+function audioIssueLabel(issue: MeetingDetail["transcriptSegments"][number]["audioIssues"][number], language: UiLanguage): string {
   switch (issue) {
     case "echo":
-      return "回声";
+      return t(language, "issueEcho");
     case "noise":
-      return "噪声";
+      return t(language, "issueNoise");
     case "low-level":
-      return "音量低";
+      return t(language, "issueLowLevel");
     case "clipping":
-      return "过载";
+      return t(language, "issueClipping");
     default:
       return issue;
   }
 }
 
-function highlightKindLabel(kind: MeetingDetail["highlights"][number]["kind"]): string {
+function audioProcessingBackendLabel(backend: RecordingSnapshot["audioProcessingBackend"], language: UiLanguage): string {
+  return backend === "heuristic-apm" ? t(language, "backendHeuristic") : t(language, "backendNone");
+}
+
+function audioProcessingStateLabel(active: boolean, language: UiLanguage): string {
+  return active ? t(language, "processingActive") : t(language, "processingInactive");
+}
+
+function highlightKindLabel(kind: MeetingDetail["highlights"][number]["kind"], language: UiLanguage): string {
   switch (kind) {
     case "decision":
-      return "决策";
+      return t(language, "highlightDecision");
     case "action":
-      return "待办";
+      return t(language, "highlightAction");
     case "risk":
-      return "风险";
+      return t(language, "highlightRisk");
     default:
-      return "待确认";
+      return t(language, "highlightFollowUp");
   }
 }
 
 function formatLatency(latencyMs: number | null): string {
   if (latencyMs === null) {
-    return "暂无";
+    return "--";
   }
   return `${latencyMs} ms`;
 }
@@ -150,39 +665,39 @@ function summaryNeedsRefresh(detail: MeetingDetail | null): boolean {
   return !!detail?.summary && latestSegmentSeq(detail) > summarySourceSegment(detail);
 }
 
-function recordingStatusLabel(recording: RecordingSnapshot): string {
+function recordingStatusLabel(recording: RecordingSnapshot, language: UiLanguage): string {
   switch (recording.status) {
     case "starting":
-      return "正在启动录制";
+      return t(language, "starting");
     case "recording":
-      return "录制进行中";
+      return t(language, "recording");
     case "paused":
-      return "会议已暂停";
+      return t(language, "paused");
     case "stopping":
-      return "正在停止采集";
+      return t(language, "stopping");
     case "processing":
-      return "正在整理最后几段";
+      return t(language, "processing");
     case "error":
-      return "录制异常";
+      return t(language, "error");
     default:
-      return "准备开始新会议";
+      return t(language, "readyNew");
   }
 }
 
-function meetingStatusLabel(status: MeetingSession["status"]): string {
+function meetingStatusLabel(status: MeetingSession["status"], language: UiLanguage): string {
   switch (status) {
     case "recording":
-      return "录制中";
+      return t(language, "recording");
     case "paused":
-      return "已暂停";
+      return t(language, "paused");
     case "processing":
-      return "整理中";
+      return t(language, "processing");
     case "completed":
-      return "已完成";
+      return t(language, "completed");
     case "failed":
-      return "失败";
+      return t(language, "error");
     default:
-      return "待命";
+      return t(language, "idle");
   }
 }
 
@@ -224,21 +739,27 @@ function isLegacyAutoMeetingTitle(title: string): boolean {
   return title.startsWith("会议记录 ");
 }
 
-function buildDefaultMeetingTitle(startedAt: Date, captureMode: AppPreferences["captureMode"]): string {
-  const base = formatCompactDateTime(startedAt.toISOString());
-  return captureMode === "microphone" ? base : `系统音频 ${base}`;
+function buildDefaultMeetingTitle(
+  startedAt: Date,
+  captureMode: AppPreferences["captureMode"],
+  language: UiLanguage
+): string {
+  const base = formatCompactDateTime(startedAt.toISOString(), language);
+  return captureMode === "microphone" ? base : `${t(language, "systemAudioPrefix")} ${base}`;
 }
 
-function meetingListTitle(session: MeetingSession): string {
-  return isLegacyAutoMeetingTitle(session.title) ? formatCompactDateTime(session.startedAt) : session.title.trim() || formatCompactDateTime(session.startedAt);
+function meetingListTitle(session: MeetingSession, language: UiLanguage): string {
+  return isLegacyAutoMeetingTitle(session.title)
+    ? formatCompactDateTime(session.startedAt, language)
+    : session.title.trim() || formatCompactDateTime(session.startedAt, language);
 }
 
-function meetingDisplayTitle(session: MeetingSession | null): string {
+function meetingDisplayTitle(session: MeetingSession | null, language: UiLanguage): string {
   if (!session) {
-    return "实时记录";
+    return t(language, "realtimeRecord");
   }
 
-  return meetingListTitle(session);
+  return meetingListTitle(session, language);
 }
 
 function getPreferredDevice(
@@ -254,7 +775,7 @@ function LoadingDots(props: {
   label?: string;
 }) {
   return (
-    <span className="loading-dots" role="status" aria-live="polite" aria-label={props.label ?? "加载中"}>
+    <span className="loading-dots" role="status" aria-live="polite" aria-label={props.label ?? "Loading"}>
       <span></span>
       <span></span>
       <span></span>
@@ -285,7 +806,7 @@ export function App() {
     void (async () => {
       try {
         if (!window.appApi) {
-          throw new Error("应用桥接接口未加载，请重启应用。");
+          throw new Error(t("zh-CN", "bridgeMissing"));
         }
 
         const state = await window.appApi.bootstrap();
@@ -393,18 +914,19 @@ export function App() {
     }
     return getPreferredDevice(bootstrap.environment, preferenceDraft ?? bootstrap.preferences, (preferenceDraft ?? bootstrap.preferences).captureMode)?.id ?? "";
   }, [bootstrap, preferenceDraft]);
+  const meetingTerms = useMemo(() => detectMeetingTerms(detail), [detail]);
+  const uiLanguage = preferenceDraft?.uiLanguage ?? "zh-CN";
 
   if (loading) {
-    return <div className="screen-center">正在加载工作台...</div>;
+    return <div className="screen-center">{t(uiLanguage, "loading")}</div>;
   }
 
   if (!bootstrap || !providerDraft || !preferenceDraft) {
     return (
       <div className="screen-center error-screen">
         <div>
-          <p className="eyebrow">启动失败</p>
-          <h1>应用没有正确加载</h1>
-          <p>{notice || "请重启应用，如果仍然失败，把终端错误发给我。"}</p>
+          <h1>{t(uiLanguage, "appFailed")}</h1>
+          <p>{notice || t(uiLanguage, "restartHint")}</p>
         </div>
       </div>
     );
@@ -416,7 +938,6 @@ export function App() {
   const currentSession = selectedSessionId
     ? state.sessions.find((item) => item.id === selectedSessionId) ?? null
     : null;
-  const meetingTerms = useMemo(() => detectMeetingTerms(detail), [detail]);
 
   async function loadDetail(sessionId: string): Promise<void> {
     const next = await window.appApi.getMeetingDetail(sessionId);
@@ -430,7 +951,7 @@ export function App() {
 
   async function requestMicrophoneAccess(): Promise<void> {
     const granted = await window.appApi.requestMicrophoneAccess();
-    setNotice(granted ? "麦克风权限已授权" : "麦克风权限未授权");
+    setNotice(granted ? t(uiLanguage, "micGranted") : t(uiLanguage, "micDenied"));
     await refreshEnvironment();
   }
 
@@ -438,11 +959,11 @@ export function App() {
     try {
       const device = getPreferredDevice(state.environment, prefsDraft, prefsDraft.captureMode);
       if (!device) {
-        setNotice(prefsDraft.captureMode === "microphone" ? "没有可用麦克风设备。" : "没有可用系统音频输入设备。");
+        setNotice(prefsDraft.captureMode === "microphone" ? t(uiLanguage, "noMicrophoneDevice") : t(uiLanguage, "noSystemAudioDevice"));
         return;
       }
 
-      const title = buildDefaultMeetingTitle(new Date(), prefsDraft.captureMode);
+      const title = buildDefaultMeetingTitle(new Date(), prefsDraft.captureMode, uiLanguage);
       await window.appApi.startMeeting({
         title,
         audioDeviceId: device.id,
@@ -459,18 +980,18 @@ export function App() {
             }
           : current
       );
-      setNotice("录制已启动");
+      setNotice(t(uiLanguage, "startSuccess"));
     } catch (error) {
-      setNotice(`开始录制失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "startFailed", toMessage(error)));
     }
   }
 
   async function stopMeeting(): Promise<void> {
     try {
       await window.appApi.stopMeeting();
-      setNotice("录制已停止");
+      setNotice(t(uiLanguage, "stoppedSuccess"));
     } catch (error) {
-      setNotice(`停止录制失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "stopFailed", toMessage(error)));
     }
   }
 
@@ -480,7 +1001,7 @@ export function App() {
       const config = await window.appApi.saveProviderConfig(configDraft);
       const preferences = await window.appApi.savePreferences(prefsDraft);
       setBootstrap((current) => (current ? { ...current, config, preferences } : current));
-      setNotice("设置已保存");
+      setNotice(t(uiLanguage, "settingsSaved"));
     } finally {
       setSaving(false);
     }
@@ -504,9 +1025,9 @@ export function App() {
     try {
       const next = await window.appApi.generateSummary(selectedSessionId);
       setDetail(next);
-      setNotice("AI 纪要已生成");
+      setNotice(t(uiLanguage, "summarySuccess"));
     } catch (error) {
-      setNotice(`生成 AI 纪要失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "summaryFailed", toMessage(error)));
     }
   }
 
@@ -516,9 +1037,9 @@ export function App() {
     }
     try {
       const filePath = await window.appApi.exportMeeting(selectedSessionId, format);
-      setNotice(`已导出到 ${filePath}`);
+      setNotice(`${t(uiLanguage, "exportedTo")} ${filePath}`);
     } catch (error) {
-      setNotice(`导出失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "exportFailed", toMessage(error)));
     }
   }
 
@@ -550,9 +1071,9 @@ export function App() {
       }
 
       setDeleteTarget(null);
-      setNotice("会议记录已删除");
+      setNotice(t(uiLanguage, "deleteSuccess"));
     } catch (error) {
-      setNotice(`删除失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "deleteFailed", toMessage(error)));
     } finally {
       setDeletingSessionId(null);
     }
@@ -568,9 +1089,9 @@ export function App() {
       const next = await window.appApi.askMeetingQuestion(selectedSessionId, qaInput.trim());
       setDetail(next);
       setQaInput("");
-      setNotice("会议问答已更新");
+      setNotice(t(uiLanguage, "qaUpdated"));
     } catch (error) {
-      setNotice(`会议问答失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "qaFailed", toMessage(error)));
     } finally {
       setAsking(false);
     }
@@ -593,9 +1114,9 @@ export function App() {
             }
           : current
       );
-      setNotice("SenseVoice 模型已下载");
+      setNotice(t(uiLanguage, "modelDownloaded"));
     } catch (error) {
-      setNotice(`模型下载失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "modelDownloadFailed", toMessage(error)));
     }
   }
 
@@ -616,9 +1137,9 @@ export function App() {
             }
           : current
       );
-      setNotice("SenseVoice 模型已删除");
+      setNotice(t(uiLanguage, "modelDeleted"));
     } catch (error) {
-      setNotice(`删除模型失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "modelDeleteFailed", toMessage(error)));
     }
   }
 
@@ -639,15 +1160,15 @@ export function App() {
             }
           : current
       );
-      setNotice(state.state === "ready" ? "SenseVoice 模型已导入" : "已取消导入");
+      setNotice(state.state === "ready" ? t(uiLanguage, "modelImported") : t(uiLanguage, "importCanceled"));
     } catch (error) {
-      setNotice(`导入模型失败：${toMessage(error)}`);
+      setNotice(localizedNotice(uiLanguage, "modelImportFailed", toMessage(error)));
     }
   }
 
   function beginRenameSession(session: MeetingSession): void {
     setEditingSessionId(session.id);
-    setEditingSessionTitle(meetingListTitle(session));
+    setEditingSessionTitle(meetingListTitle(session, uiLanguage));
     setNotice("");
   }
 
@@ -656,7 +1177,7 @@ export function App() {
       return;
     }
 
-    const fallbackTitle = buildDefaultMeetingTitle(new Date(session.startedAt), session.captureMode);
+    const fallbackTitle = buildDefaultMeetingTitle(new Date(session.startedAt), session.captureMode, uiLanguage);
     const nextTitle = editingSessionTitle.trim() || fallbackTitle;
     setRenamingSessionId(session.id);
     try {
@@ -666,9 +1187,9 @@ export function App() {
       }
       setEditingSessionId(null);
       setEditingSessionTitle("");
-      setNotice("会议名称已更新");
-    } catch (error) {
-      setNotice(`重命名失败：${toMessage(error)}`);
+    setNotice(t(uiLanguage, "meetingTitleUpdated"));
+  } catch (error) {
+      setNotice(localizedNotice(uiLanguage, "renameFailed", toMessage(error)));
     } finally {
       setRenamingSessionId(null);
     }
@@ -685,12 +1206,18 @@ export function App() {
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-panel">
-            <div className="sidebar-intro">
-              <p className="eyebrow">Realtime Copilot</p>
-              <h1>AI Meeting</h1>
+            <div className="sidebar-search-shell">
+              <input
+                aria-label={t(uiLanguage, "searchPlaceholder")}
+                className="sidebar-search"
+                disabled
+                placeholder={t(uiLanguage, "searchPlaceholder")}
+                type="search"
+              />
             </div>
 
             <HistoryPanel
+              language={uiLanguage}
               sessions={state.sessions}
               selectedSessionId={selectedSessionId}
               editingSessionId={editingSessionId}
@@ -715,7 +1242,7 @@ export function App() {
                 type="button"
                 onClick={() => setActiveTab("settings")}
               >
-                <span className="sidebar-settings-label">系统设置</span>
+                <span className="sidebar-settings-label">{t(uiLanguage, "settings")}</span>
               </button>
             </div>
           </div>
@@ -724,8 +1251,7 @@ export function App() {
         <main className="workspace">
           <header className="workspace-header">
             <div className="workspace-heading">
-              <p className="eyebrow">{activeTab === "settings" ? "System Preferences" : "Realtime Copilot"}</p>
-              <h2>{activeTab === "settings" ? "设置中心" : meetingDisplayTitle(currentSession)}</h2>
+              <h2>{activeTab === "settings" ? t(uiLanguage, "systemPreferences") : meetingDisplayTitle(currentSession, uiLanguage)}</h2>
             </div>
             {notice ? <div className="notice">{notice}</div> : null}
           </header>
@@ -739,15 +1265,17 @@ export function App() {
                     recording={state.recording}
                     currentSession={currentSession}
                     selectedDeviceId={selectedDeviceId}
+                    language={uiLanguage}
                   />
-                  <HighlightsPanel detail={detail} compact meetingTerms={meetingTerms} />
-                  <TranscriptPanel detail={detail} meetingTerms={meetingTerms} />
+                  <HighlightsPanel detail={detail} compact meetingTerms={meetingTerms} language={uiLanguage} />
+                  <TranscriptPanel detail={detail} meetingTerms={meetingTerms} language={uiLanguage} />
                 </>
               ) : (
                 <SettingsPanel
                   environment={state.environment}
                   providerDraft={configDraft}
                   preferenceDraft={prefsDraft}
+                  language={uiLanguage}
                   onProviderChange={setProviderDraft}
                   onPreferenceChange={setPreferenceDraft}
                   onSave={saveSettings}
@@ -770,21 +1298,22 @@ export function App() {
                 currentSession={currentSession}
                 detail={detail}
                 recording={state.recording}
+                language={uiLanguage}
                 onPause={async () => {
                   try {
                     await window.appApi.pauseMeeting();
-                    setNotice("会议已暂停");
+                    setNotice(t(uiLanguage, "pauseSuccess"));
                   } catch (error) {
-                    setNotice(`暂停失败：${toMessage(error)}`);
+                    setNotice(localizedNotice(uiLanguage, "pauseFailed", toMessage(error)));
                   }
                 }}
                 onResume={async () => {
                   try {
                     const targetSessionId = currentSession?.status === "paused" ? currentSession.id : undefined;
                     await window.appApi.resumeMeeting(targetSessionId);
-                    setNotice("会议已继续录制");
+                    setNotice(t(uiLanguage, "resumeSuccess"));
                   } catch (error) {
-                    setNotice(`继续录制失败：${toMessage(error)}`);
+                    setNotice(localizedNotice(uiLanguage, "resumeFailed", toMessage(error)));
                   }
                 }}
                 onStop={stopMeeting}
@@ -794,6 +1323,7 @@ export function App() {
                 detail={detail}
                 recording={state.recording}
                 meetingTerms={meetingTerms}
+                language={uiLanguage}
                 qaInput={qaInput}
                 asking={asking}
                 onQaInputChange={setQaInput}
@@ -807,6 +1337,7 @@ export function App() {
 
       {deleteTarget ? (
         <DeleteConfirmDialog
+          language={uiLanguage}
           session={deleteTarget}
           deleting={deletingSessionId === deleteTarget.id}
           onCancel={() => setDeleteTarget(null)}
@@ -822,16 +1353,17 @@ function CapturePanel(props: {
   recording: RecordingSnapshot;
   currentSession: MeetingSession | null;
   selectedDeviceId: string;
+  language: UiLanguage;
 }) {
   const [statusExpanded, setStatusExpanded] = useState(false);
   const summaryItems = [
     {
-      label: "延迟",
+      label: t(props.language, "latency"),
       value: formatLatency(props.recording.currentLatencyMs)
     },
     {
-      label: "质量",
-      value: transcriptQualityLabel(props.recording.inputQuality)
+      label: t(props.language, "inputQuality"),
+      value: transcriptQualityLabel(props.recording.inputQuality, props.language)
     }
   ];
 
@@ -844,12 +1376,11 @@ function CapturePanel(props: {
         onClick={() => setStatusExpanded((current) => !current)}
       >
         <div className="accordion-trigger-main">
-          <p className="eyebrow">System Status</p>
-          <h4>运行状态</h4>
+          <h4>{t(props.language, "runtime")}</h4>
         </div>
         <div className="accordion-trigger-side compact">
           <span className={`session-status-pill compact tone-${meetingStatusTone(props.currentSession?.status ?? "idle")}`}>
-            {props.currentSession ? meetingStatusLabel(props.currentSession.status) : "待命"}
+            {props.currentSession ? meetingStatusLabel(props.currentSession.status, props.language) : t(props.language, "waiting")}
           </span>
           <div className="accordion-summary">
             {summaryItems.map((item) => (
@@ -859,75 +1390,118 @@ function CapturePanel(props: {
               </span>
             ))}
           </div>
-          <span className="accordion-icon">{statusExpanded ? "−" : "+"}</span>
         </div>
       </button>
 
       {statusExpanded ? (
         <div className="accordion-content">
           <div className="metrics-grid">
-              <article className="metric-card">
-                <span>状态</span>
-                <strong>{recordingStatusLabel(props.recording)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>输入状态</span>
-                <strong>{audioStateLabel(props.recording.audioState)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>实时延迟</span>
-                <strong>{formatLatency(props.recording.currentLatencyMs)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>输入质量</span>
-                <strong>{transcriptQualityLabel(props.recording.inputQuality)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>最近有声</span>
-                <strong>{formatRelativeStatus(props.recording.lastAudioAt)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>最近转写成功</span>
-                <strong>{formatRelativeStatus(props.recording.lastTranscriptAt)}</strong>
-              </article>
-              <article className="metric-card">
-                <span>风险片段</span>
-                <strong>低质 {props.recording.consecutiveLowQualitySegments} / 失败 {props.recording.failedSegments}</strong>
-              </article>
-            </div>
+            <article className="metric-card">
+              <span>{t(props.language, "statusLabel")}</span>
+              <strong>{recordingStatusLabel(props.recording, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "inputStatusLabel")}</span>
+              <strong>{audioStateLabel(props.recording.audioState, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "realtimeLatency")}</span>
+              <strong>{formatLatency(props.recording.currentLatencyMs)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "inputQuality")}</span>
+              <strong>{transcriptQualityLabel(props.recording.inputQuality, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "audioBackend")}</span>
+              <strong>{audioProcessingBackendLabel(props.recording.audioProcessingBackend, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "processingStatus")}</span>
+              <strong>{audioProcessingStateLabel(props.recording.voiceProcessingActive, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "lastAudio")}</span>
+              <strong>{formatRelativeStatus(props.recording.lastAudioAt, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "lastTranscript")}</span>
+              <strong>{formatRelativeStatus(props.recording.lastTranscriptAt, props.language)}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "riskSegments")}</span>
+              <strong>
+                {t(props.language, "lowQualityShort")} {props.recording.consecutiveLowQualitySegments} / {t(props.language, "failedShort")}{" "}
+                {props.recording.failedSegments}
+              </strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "vadTriggers")}</span>
+              <strong>{props.recording.vadTriggerCount}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "skippedSilence")}</span>
+              <strong>{props.recording.skippedSilenceSegments}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "totalLowQualitySegments")}</span>
+              <strong>{props.recording.lowQualitySegments}</strong>
+            </article>
+            <article className="metric-card">
+              <span>{t(props.language, "stitchSuppressed")}</span>
+              <strong>{props.recording.stitchSuppressedSegments}</strong>
+            </article>
+          </div>
 
           <div className="level-card level-card-inline">
             <div className="section-head">
               <div>
-                <h4>实时电平</h4>
+                <h4>{t(props.language, "liveLevel")}</h4>
                 <p className="muted">
-                  {latencyModeLabel(props.recording.latencyMode)}延迟策略 · {audioStateLabel(props.recording.audioState)}
+                  {latencyModeLabel(props.recording.latencyMode, props.language)} · {audioStateLabel(props.recording.audioState, props.language)} ·{" "}
+                  {audioProcessingBackendLabel(props.recording.audioProcessingBackend, props.language)}
                 </p>
               </div>
             </div>
             <div className="level-track">
               <div className="level-fill" style={{ width: `${audioLevelPercent(props.recording.inputLevel)}%` }}></div>
             </div>
-            <p className="level-readout mono-text">input level {Math.round(props.recording.inputLevel * 1000) / 1000}</p>
-            <p>{props.recording.partialText || "等待稳定语音输入..."}</p>
+            <div className="level-track">
+              <div className="level-fill" style={{ width: `${audioLevelPercent(props.recording.processedInputLevel)}%` }}></div>
+            </div>
+            <p className="level-readout mono-text">
+              {t(props.language, "rawInputLevel")} {Math.round(props.recording.inputLevel * 1000) / 1000} | {t(props.language, "processedInputLevel")}{" "}
+              {Math.round(props.recording.processedInputLevel * 1000) / 1000}
+            </p>
+            <p>{props.recording.partialText || t(props.language, "partialFallback")}</p>
             {props.recording.lastAudioIssues.length > 0 ? (
               <div className="tag-row">
                 {props.recording.lastAudioIssues.map((issue) => (
                   <span key={issue} className="status-tag warning">
-                    {audioIssueLabel(issue)}
+                    {audioIssueLabel(issue, props.language)}
                   </span>
                 ))}
               </div>
             ) : null}
             {props.recording.lastOverlapAt ? (
-              <p className="warning-text">最近检测到重叠发言：{formatRelativeStatus(props.recording.lastOverlapAt)}</p>
+              <p className="warning-text">
+                {t(props.language, "recentOverlap")}: {formatRelativeStatus(props.recording.lastOverlapAt, props.language)}
+              </p>
             ) : null}
-            {props.recording.errorMessage ? <p className="error-text">最近错误：{props.recording.errorMessage}</p> : null}
+            {props.recording.errorMessage ? (
+              <p className="error-text">
+                {t(props.language, "recentError")}: {props.recording.errorMessage}
+              </p>
+            ) : null}
             {props.recording.consecutiveAsrFailures > 0 ? (
-              <p className="warning-text">连续失败段数：{props.recording.consecutiveAsrFailures}</p>
+              <p className="warning-text">
+                {t(props.language, "consecutiveFailures")}: {props.recording.consecutiveAsrFailures}
+              </p>
             ) : null}
             {props.recording.consecutiveLowQualitySegments > 0 ? (
-              <p className="warning-text">连续低质量片段：{props.recording.consecutiveLowQualitySegments}</p>
+              <p className="warning-text">
+                {t(props.language, "consecutiveLowQuality")}: {props.recording.consecutiveLowQualitySegments}
+              </p>
             ) : null}
           </div>
         </div>
@@ -937,6 +1511,7 @@ function CapturePanel(props: {
 }
 
 function HistoryPanel(props: {
+  language: UiLanguage;
   sessions: MeetingSession[];
   selectedSessionId: string | null;
   editingSessionId: string | null;
@@ -955,13 +1530,12 @@ function HistoryPanel(props: {
     <section className="history-panel">
       <div className="history-panel-header">
         <div>
-          <p className="eyebrow">History</p>
-          <h3>历史会议</h3>
+          <h3>{t(props.language, "history")}</h3>
         </div>
         <button
           className="history-add-button"
           type="button"
-          aria-label="开始新会议"
+          aria-label={t(props.language, "startNewMeeting")}
           disabled={!props.canStart}
           onClick={() => void props.onStart()}
         >
@@ -972,8 +1546,8 @@ function HistoryPanel(props: {
       <div className="history-list-shell">
         {props.sessions.length === 0 ? (
           <div className="history-empty">
-            <p className="mono-text">暂无会议记录</p>
-            <p className="muted">开始一场新会议后，记录会出现在这里。</p>
+            <p className="mono-text">{t(props.language, "noHistory")}</p>
+            <p className="muted">{t(props.language, "startMeetingHint")}</p>
           </div>
         ) : (
           <div className="history-list">
@@ -1002,7 +1576,7 @@ function HistoryPanel(props: {
                         }}
                       />
                       <span className="history-edit-hint muted">
-                        {props.renamingSessionId === session.id ? "保存中..." : "回车保存，Esc 取消"}
+                        {props.renamingSessionId === session.id ? t(props.language, "saving") : t(props.language, "saveRenameHint")}
                       </span>
                     </div>
                   ) : (
@@ -1012,18 +1586,18 @@ function HistoryPanel(props: {
                       onClick={() => props.onSelect(session.id)}
                       onDoubleClick={() => props.onBeginRename(session)}
                     >
-                      <span className="history-title mono-text">{meetingListTitle(session)}</span>
+                      <span className="history-title mono-text">{meetingListTitle(session, props.language)}</span>
                       <span className="history-subline">
                         <span className={`history-status-badge tone-${tone}`}>
                           <span className="history-status-icon">{meetingStatusIcon(session.status)}</span>
-                          <span>{meetingStatusLabel(session.status)}</span>
+                          <span>{meetingStatusLabel(session.status, props.language)}</span>
                         </span>
-                        <span className="history-time muted mono-text">{formatCompactDateTime(session.startedAt)}</span>
+                        <span className="history-time muted mono-text">{formatCompactDateTime(session.startedAt, props.language)}</span>
                       </span>
                     </button>
                   )}
                   {props.onDelete ? (
-                    <button className="history-delete" type="button" aria-label="删除会议记录" onClick={() => props.onDelete?.(session)}>
+                    <button className="history-delete" type="button" aria-label={t(props.language, "deleteMeeting")} onClick={() => props.onDelete?.(session)}>
                       ×
                     </button>
                   ) : null}
@@ -1041,6 +1615,7 @@ function SettingsPanel(props: {
   environment: EnvironmentStatus;
   providerDraft: ProviderConfig;
   preferenceDraft: AppPreferences;
+  language: UiLanguage;
   onProviderChange: (value: ProviderConfig) => void;
   onPreferenceChange: (value: AppPreferences) => void;
   onSave: () => Promise<void>;
@@ -1059,15 +1634,34 @@ function SettingsPanel(props: {
   return (
     <div className="stack">
       <section className="settings-hero">
-        <p className="eyebrow">System Preferences</p>
-        <h3>全局设置</h3>
+        <h3>{t(props.language, "settingsTitle")}</h3>
       </section>
 
       <div className="settings-grid">
         <div className="settings-card">
           <div className="settings-card-head">
-            <p className="eyebrow">Capture</p>
-            <h4>采集模式</h4>
+            <h4>{t(props.language, "general")}</h4>
+          </div>
+          <label className="form-field">
+            <span>{t(props.language, "language")}</span>
+            <select
+              value={props.preferenceDraft.uiLanguage}
+              onChange={(event) =>
+                props.onPreferenceChange({
+                  ...props.preferenceDraft,
+                  uiLanguage: event.target.value as UiLanguage
+                })
+              }
+            >
+              <option value="zh-CN">{t(props.language, "languageZh")}</option>
+              <option value="en-US">{t(props.language, "languageEn")}</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="settings-card">
+          <div className="settings-card-head">
+            <h4>{t(props.language, "capture")}</h4>
           </div>
           <div className="capture-mode-grid">
             <button
@@ -1080,7 +1674,7 @@ function SettingsPanel(props: {
                 })
               }
             >
-              麦克风模式
+              {t(props.language, "microphoneMode")}
             </button>
             <button
               className={preferenceDraft.captureMode === "system-audio" ? "nav-item active" : "nav-item"}
@@ -1092,15 +1686,14 @@ function SettingsPanel(props: {
                 })
               }
             >
-              系统音频模式
+              {t(props.language, "systemAudioMode")}
             </button>
           </div>
         </div>
 
         <div className="settings-card">
           <div className="settings-card-head">
-            <p className="eyebrow">ASR</p>
-            <h4>转写服务</h4>
+            <h4>{t(props.language, "asr")}</h4>
           </div>
           <div className="capture-mode-grid">
             <button
@@ -1113,7 +1706,7 @@ function SettingsPanel(props: {
                 })
               }
             >
-              Gemini 音频
+              Gemini
             </button>
             <button
               className={providerDraft.asr.providerId === "openai-compatible-asr" ? "nav-item active" : "nav-item"}
@@ -1142,26 +1735,34 @@ function SettingsPanel(props: {
                 })
               }
             >
-              本地 SenseVoice
+              {t(props.language, "localSenseVoice")}
             </button>
           </div>
           {localAsrSelected ? (
             <>
               <div className="guide-grid">
                 <div className="guide-card">
-                  <span className="guide-label">模型状态</span>
+                  <span className="guide-label">{t(props.language, "modelState")}</span>
                   <strong className="mono-text">
-                    {environment.localModelState}
+                    {modelStateLabel(environment.localModelState, props.language)}
                     {environment.localModelDownloadProgress !== null ? ` ${environment.localModelDownloadProgress}%` : ""}
                   </strong>
                 </div>
                 <div className="guide-card">
-                  <span className="guide-label">运行时</span>
+                  <span className="guide-label">{t(props.language, "runtimeLabel")}</span>
                   <strong className="mono-text">sherpa-onnx</strong>
+                </div>
+                <div className="guide-card">
+                  <span className="guide-label">{t(props.language, "audioBackend")}</span>
+                  <strong className="mono-text">{audioProcessingBackendLabel(providerDraft.asr.audioProcessingBackend, props.language)}</strong>
+                </div>
+                <div className="guide-card">
+                  <span className="guide-label">{t(props.language, "preferredBackend")}</span>
+                  <strong className="mono-text">{audioProcessingBackendLabel(environment.preferredAudioProcessingBackend, props.language)}</strong>
                 </div>
               </div>
               <label className="form-field">
-                <span>识别语言</span>
+                <span>{t(props.language, "recognitionLanguage")}</span>
                 <select
                   value={providerDraft.asr.localLanguage}
                   onChange={(event) =>
@@ -1174,16 +1775,16 @@ function SettingsPanel(props: {
                     })
                   }
                 >
-                  <option value="auto">自动</option>
-                  <option value="zh">普通话</option>
-                  <option value="yue">粤语</option>
-                  <option value="en">英语</option>
-                  <option value="ja">日语</option>
-                  <option value="ko">韩语</option>
+                  <option value="auto">{t(props.language, "languageAuto")}</option>
+                  <option value="zh">{t(props.language, "languageMandarin")}</option>
+                  <option value="yue">{t(props.language, "languageCantonese")}</option>
+                  <option value="en">{t(props.language, "languageEnglish")}</option>
+                  <option value="ja">{t(props.language, "languageJapanese")}</option>
+                  <option value="ko">{t(props.language, "languageKorean")}</option>
                 </select>
               </label>
               <label className="form-field">
-                <span>延迟策略</span>
+                <span>{t(props.language, "latencyStrategy")}</span>
                 <select
                   value={providerDraft.asr.latencyMode}
                   onChange={(event) =>
@@ -1196,13 +1797,13 @@ function SettingsPanel(props: {
                     })
                   }
                 >
-                  <option value="fast">快速</option>
-                  <option value="balanced">平衡</option>
-                  <option value="accurate">高精度</option>
+                  <option value="fast">{t(props.language, "fast")}</option>
+                  <option value="balanced">{t(props.language, "balanced")}</option>
+                  <option value="accurate">{t(props.language, "accurate")}</option>
                 </select>
               </label>
               <label className="form-field">
-                <span>兜底分段时长 (ms)</span>
+                <span>{t(props.language, "chunkFallback")}</span>
                 <input
                   type="number"
                   min={4000}
@@ -1221,12 +1822,12 @@ function SettingsPanel(props: {
               </label>
               <div className="guide-grid">
                 <div className="guide-card">
-                  <span className="guide-label">VAD</span>
-                  <strong>{providerDraft.asr.vadEnabled ? "已启用" : "已关闭"}</strong>
+                  <span className="guide-label">{t(props.language, "vad")}</span>
+                  <strong>{providerDraft.asr.vadEnabled ? t(props.language, "enabled") : t(props.language, "disabled")}</strong>
                 </div>
                 <div className="guide-card">
-                  <span className="guide-label">重叠检测</span>
-                  <strong>{providerDraft.asr.overlapDetectionEnabled ? "已启用" : "已关闭"}</strong>
+                  <span className="guide-label">{t(props.language, "overlapDetection")}</span>
+                  <strong>{providerDraft.asr.overlapDetectionEnabled ? t(props.language, "enabled") : t(props.language, "disabled")}</strong>
                 </div>
               </div>
               <label className="checkbox-row">
@@ -1243,7 +1844,7 @@ function SettingsPanel(props: {
                     })
                   }
                 />
-                <span>启用 VAD 驱动分段</span>
+                <span>{t(props.language, "enableVad")}</span>
               </label>
               <label className="checkbox-row">
                 <input
@@ -1259,10 +1860,10 @@ function SettingsPanel(props: {
                     })
                   }
                 />
-                <span>启用重叠发言检测</span>
+                <span>{t(props.language, "enableOverlapDetection")}</span>
               </label>
               <label className="form-field">
-                <span>VAD 阈值</span>
+                <span>{t(props.language, "vadThreshold")}</span>
                 <input
                   type="number"
                   min={0.005}
@@ -1281,7 +1882,7 @@ function SettingsPanel(props: {
                 />
               </label>
               <label className="form-field">
-                <span>尾部缓冲 (ms)</span>
+                <span>{t(props.language, "tailBuffer")}</span>
                 <input
                   type="number"
                   min={120}
@@ -1311,7 +1912,7 @@ function SettingsPanel(props: {
                 </div>
               </div>
               <label className="form-field">
-                <span>AEC 策略</span>
+                <span>{t(props.language, "aecStrategy")}</span>
                 <select
                   value={providerDraft.asr.aecMode}
                   onChange={(event) =>
@@ -1324,13 +1925,13 @@ function SettingsPanel(props: {
                     })
                   }
                 >
-                  <option value="auto">自动</option>
-                  <option value="on">强制开启</option>
-                  <option value="off">关闭</option>
+                  <option value="auto">{t(props.language, "auto")}</option>
+                  <option value="on">{t(props.language, "forceOn")}</option>
+                  <option value="off">{t(props.language, "off")}</option>
                 </select>
               </label>
               <label className="form-field">
-                <span>噪声抑制</span>
+                <span>{t(props.language, "noiseSuppression")}</span>
                 <select
                   value={providerDraft.asr.noiseSuppressionMode}
                   onChange={(event) =>
@@ -1343,13 +1944,13 @@ function SettingsPanel(props: {
                     })
                   }
                 >
-                  <option value="auto">自动</option>
-                  <option value="on">开启</option>
-                  <option value="off">关闭</option>
+                  <option value="auto">{t(props.language, "auto")}</option>
+                  <option value="on">{t(props.language, "on")}</option>
+                  <option value="off">{t(props.language, "off")}</option>
                 </select>
               </label>
               <label className="form-field">
-                <span>自动增益</span>
+                <span>{t(props.language, "autoGain")}</span>
                 <select
                   value={providerDraft.asr.autoGainMode}
                   onChange={(event) =>
@@ -1362,14 +1963,14 @@ function SettingsPanel(props: {
                     })
                   }
                 >
-                  <option value="auto">自动</option>
-                  <option value="on">开启</option>
-                  <option value="off">关闭</option>
+                  <option value="auto">{t(props.language, "auto")}</option>
+                  <option value="on">{t(props.language, "on")}</option>
+                  <option value="off">{t(props.language, "off")}</option>
                 </select>
               </label>
-              <p className="muted">说明：当前版本已实现本地噪声抑制、自动增益、VAD 与重叠检测；AEC 策略已预留接口，现阶段仍以告警和保守降级为主。</p>
-              <p className="muted">模型路径：{environment.localModelStoragePath ?? "尚未下载"}</p>
-              {environment.localModelErrorMessage ? <p className="error-text">模型错误：{environment.localModelErrorMessage}</p> : null}
+              <p className="muted">{t(props.language, "processingNote")}</p>
+              <p className="muted">{t(props.language, "modelPath")}：{environment.localModelStoragePath ?? t(props.language, "none")}</p>
+              {environment.localModelErrorMessage ? <p className="error-text">{t(props.language, "modelError")}：{environment.localModelErrorMessage}</p> : null}
               <div className="control-grid">
                 <button
                   type="button"
@@ -1377,31 +1978,31 @@ function SettingsPanel(props: {
                   onClick={props.onDownloadLocalModel}
                 >
                   {environment.localModelState === "ready"
-                    ? "重新下载模型"
+                    ? t(props.language, "redownloadModel")
                     : environment.localModelState === "downloading"
-                      ? "下载中..."
-                      : "下载模型"}
+                      ? t(props.language, "downloadingModel")
+                      : t(props.language, "downloadModel")}
                 </button>
                 <button
                   type="button"
                   disabled={environment.localModelState === "downloading" || environment.localModelState === "not-downloaded"}
                   onClick={props.onDeleteLocalModel}
                 >
-                  删除模型
+                  {t(props.language, "deleteModel")}
                 </button>
                 <button
                   type="button"
                   disabled={environment.localModelState === "downloading"}
                   onClick={props.onImportLocalModelDir}
                 >
-                  导入模型目录
+                  {t(props.language, "importModelDir")}
                 </button>
               </div>
             </>
           ) : (
             <>
               <label className="form-field">
-                <span>Endpoint</span>
+                <span>{t(props.language, "endpoint")}</span>
                 <input
                   value={providerDraft.asr.endpoint}
                   onChange={(event) =>
@@ -1413,7 +2014,7 @@ function SettingsPanel(props: {
                 />
               </label>
               <label className="form-field">
-                <span>API Key</span>
+                <span>{t(props.language, "apiKey")}</span>
                 <input
                   type="password"
                   value={providerDraft.asr.apiKey}
@@ -1426,7 +2027,7 @@ function SettingsPanel(props: {
                 />
               </label>
               <label className="form-field">
-                <span>Model</span>
+                <span>{t(props.language, "model")}</span>
                 <input
                   value={providerDraft.asr.model}
                   onChange={(event) =>
@@ -1443,8 +2044,7 @@ function SettingsPanel(props: {
 
         <div className="settings-card">
           <div className="settings-card-head">
-            <p className="eyebrow">LLM</p>
-            <h4>纪要模型</h4>
+            <h4>{t(props.language, "llm")}</h4>
           </div>
           <div className="capture-mode-grid">
             <button
@@ -1495,11 +2095,11 @@ function SettingsPanel(props: {
                 })
               }
             >
-              Ollama 本地
+              {t(props.language, "localOllama")}
             </button>
           </div>
           <label className="form-field">
-            <span>{localLlmSelected ? "Ollama 地址" : "Base URL"}</span>
+            <span>{localLlmSelected ? "Ollama URL" : "Base URL"}</span>
             <input
               value={providerDraft.llm.baseUrl}
               onChange={(event) =>
@@ -1512,7 +2112,7 @@ function SettingsPanel(props: {
           </label>
           {!localLlmSelected ? (
             <label className="form-field">
-              <span>API Key</span>
+              <span>{t(props.language, "apiKey")}</span>
               <input
                 type="password"
                 value={providerDraft.llm.apiKey}
@@ -1526,7 +2126,7 @@ function SettingsPanel(props: {
             </label>
           ) : null}
           <label className="form-field">
-            <span>Model</span>
+            <span>{t(props.language, "model")}</span>
             <input
               value={providerDraft.llm.model}
               onChange={(event) =>
@@ -1541,8 +2141,7 @@ function SettingsPanel(props: {
 
         <div className="settings-card settings-card-wide">
           <div className="settings-card-head">
-            <p className="eyebrow">Workspace</p>
-            <h4>本地偏好与权限</h4>
+            <h4>{t(props.language, "workspacePrefs")}</h4>
           </div>
 
           <div className="preference-list">
@@ -1557,7 +2156,7 @@ function SettingsPanel(props: {
                   })
                 }
               />
-              <span>跳过首次引导</span>
+              <span>{t(props.language, "skipGuide")}</span>
             </label>
             <label className="checkbox-row">
               <input
@@ -1570,38 +2169,38 @@ function SettingsPanel(props: {
                   })
                 }
               />
-              <span>导出 TXT 时保留静音/失败占位提示</span>
+              <span>{t(props.language, "exportPlaceholders")}</span>
             </label>
           </div>
 
           <div className="guide-merged">
             <div className="guide-grid">
               <div className="guide-card">
-                <span className="guide-label">权限状态</span>
-                <strong className="mono-text">{environment.microphonePermission}</strong>
+                <span className="guide-label">{t(props.language, "microphonePermission")}</span>
+                <strong className="mono-text">{permissionLabel(environment.microphonePermission, props.language)}</strong>
               </div>
               <div className="guide-card">
-                <span className="guide-label">BlackHole</span>
-                <strong>{environment.hasBlackHoleDevice ? "已检测到" : "未检测到"}</strong>
+                <span className="guide-label">{t(props.language, "blackhole")}</span>
+                <strong>{environment.hasBlackHoleDevice ? t(props.language, "detected") : t(props.language, "notDetected")}</strong>
               </div>
             </div>
 
             <div className="control-grid">
               <button type="button" onClick={props.onRequestAccess}>
-                请求麦克风权限
+                {t(props.language, "requestMic")}
               </button>
               <button type="button" onClick={props.onRefresh}>
-                重新扫描设备
+                {t(props.language, "refreshDevices")}
               </button>
             </div>
           </div>
 
           <div className="settings-actions">
             <button className="primary-button" disabled={props.saving} type="button" onClick={props.onSave}>
-              {props.saving ? "保存中..." : "保存设置"}
+              {props.saving ? t(props.language, "saving") : t(props.language, "saveSettings")}
             </button>
             <button className="secondary-button" type="button" onClick={props.onCompleteGuide}>
-              引导完成，返回工作台
+              {t(props.language, "finishGuide")}
             </button>
           </div>
         </div>
@@ -1613,13 +2212,13 @@ function SettingsPanel(props: {
 function TranscriptPanel(props: {
   detail: MeetingDetail | null;
   meetingTerms: string[];
+  language: UiLanguage;
 }) {
   if (!props.detail) {
     return (
       <div className="detail-card transcript-card empty-state">
-        <p className="eyebrow">Transcript</p>
-        <h3>选择一场会议</h3>
-        <p>中间区域会展示当前会议的转写全文与片段状态。</p>
+        <h3>{t(props.language, "chooseMeeting")}</h3>
+        <p>{t(props.language, "transcriptEmpty")}</p>
       </div>
     );
   }
@@ -1628,13 +2227,12 @@ function TranscriptPanel(props: {
     <div className="detail-card transcript-card">
       <div className="section-head">
         <div>
-          <p className="eyebrow">Transcript</p>
-          <h4>实时字幕流</h4>
+          <h4>{t(props.language, "transcript")}</h4>
         </div>
-        <span className="mono-text">{props.detail.transcriptSegments.length} 段</span>
+        <span className="mono-text">{countLabel(props.detail.transcriptSegments.length, "segmentUnit", props.language)}</span>
       </div>
       {props.meetingTerms.length > 0 ? (
-        <div className="term-strip">
+        <div className="term-strip scrollable">
           {props.meetingTerms.slice(0, 8).map((term) => (
             <span key={term} className="status-tag term-chip">
               {term}
@@ -1653,20 +2251,19 @@ function TranscriptPanel(props: {
             <span className="transcript-time mono-text">{segment.startMs}ms</span>
             <div>
               <div className="transcript-meta-row">
-                <p>{segment.kind === "speech" ? highlightText(segment.text, props.meetingTerms) : segment.note || "此段没有可用正文。"}</p>
+                <p>{segment.kind === "speech" ? highlightText(segment.text, props.meetingTerms) : segment.note || t(props.language, "noBody")}</p>
                 <div className="tag-row">
-                  <span className={`status-tag quality-${segment.quality}`}>{transcriptQualityLabel(segment.quality)}</span>
-                  {segment.overlapDetected ? <span className="status-tag warning">重叠</span> : null}
+                  <span className={`status-tag quality-${segment.quality}`}>{transcriptQualityLabel(segment.quality, props.language)}</span>
+                  {segment.overlapDetected ? <span className="status-tag warning">{t(props.language, "overlapDetected")}</span> : null}
                   {segment.audioIssues.map((issue) => (
                     <span key={issue} className="status-tag muted">
-                      {audioIssueLabel(issue)}
+                      {audioIssueLabel(issue, props.language)}
                     </span>
                   ))}
                 </div>
               </div>
               <small>
-                类型：{segment.kind} | 电平：{Math.round(segment.inputLevel * 1000) / 1000} | 延迟：{segment.latencyMs} ms |
-                处理：{segment.processingMs} ms | 去重：{segment.overlapChars}
+                {t(props.language, "speechType")}: {segment.kind} | {t(props.language, "level")}: {Math.round(segment.inputLevel * 1000) / 1000} | {t(props.language, "latency")}: {segment.latencyMs} ms | {t(props.language, "processingMs")}: {segment.processingMs} ms | {t(props.language, "dedupe")}: {segment.overlapChars}
               </small>
               {segment.note && segment.kind === "speech" ? <small>{segment.note}</small> : null}
             </div>
@@ -1681,13 +2278,35 @@ function HighlightsPanel(props: {
   detail: MeetingDetail | null;
   compact?: boolean;
   meetingTerms: string[];
+  language: UiLanguage;
 }) {
+  const [expanded, setExpanded] = useState(true);
+  const isExpanded = props.compact || expanded;
+
+  function handleHighlightWheel(event: WheelEvent<HTMLDivElement>): void {
+    const region = event.currentTarget;
+    if (region.scrollHeight <= region.clientHeight) {
+      return;
+    }
+
+    const atTop = region.scrollTop <= 0;
+    const atBottom = region.scrollTop + region.clientHeight >= region.scrollHeight - 1;
+    const canScrollUp = event.deltaY < 0 && !atTop;
+    const canScrollDown = event.deltaY > 0 && !atBottom;
+
+    if (!canScrollUp && !canScrollDown) {
+      return;
+    }
+
+    event.preventDefault();
+    region.scrollTop += event.deltaY;
+  }
+
   if (!props.detail) {
     return (
       <div className={`detail-card highlight-card ${props.compact ? "compact" : ""} empty-state`}>
-        <p className="eyebrow">Highlights</p>
-        <h3>重点提醒</h3>
-        <p>会中高置信度的决策、待办和风险会出现在这里。</p>
+        <h3>{t(props.language, "highlights")}</h3>
+        <p>{t(props.language, "noHighlights")}</p>
       </div>
     );
   }
@@ -1697,30 +2316,43 @@ function HighlightsPanel(props: {
 
   return (
     <div className={`detail-card highlight-card ${props.compact ? "compact" : ""}`}>
-      <div className="section-head">
-        <div>
-          <p className="eyebrow">Highlights</p>
-          <h4>重点提醒</h4>
+      <button
+        className={`section-toggle ${props.compact ? "locked" : ""}`}
+        type="button"
+        aria-disabled={props.compact}
+        aria-expanded={isExpanded}
+        onClick={() => {
+          if (!props.compact) {
+            setExpanded((value) => !value);
+          }
+        }}
+      >
+        <div className="section-head">
+          <div>
+            <h4>{t(props.language, "highlights")}</h4>
+          </div>
+          <div className="highlight-head-actions">
+            <span className="mono-text">{countLabel(props.detail.highlights.length, "itemUnit", props.language)}</span>
+          </div>
         </div>
-        <span className="mono-text">{props.detail.highlights.length} 条</span>
-      </div>
+      </button>
       {props.detail.highlights.length === 0 ? (
-        <p className="muted">当前还没有满足保守阈值的提醒。系统只会在高置信度、非重叠片段上提示重点。</p>
+        <p className="muted">{t(props.language, "noHighlights")}</p>
       ) : (
         <>
           <div className="highlight-chip-row">
             {groups.map((group) => (
               <span key={group.kind} className={`status-tag accent subtle-${group.kind}`}>
-                {highlightKindLabel(group.kind)} {group.items.length}
+                {highlightKindLabel(group.kind, props.language)} {group.items.length}
               </span>
             ))}
           </div>
           {props.compact ? (
-            <div className="highlight-list">
-              {flatItems.slice(0, 3).map((item) => (
+            <div className="highlight-list scroll-shell highlight-scroll-region" onWheel={handleHighlightWheel}>
+              {flatItems.map((item) => (
                 <article key={item.id} className={`highlight-item kind-${item.kind}`}>
                   <div className="highlight-item-head">
-                    <span className="status-tag accent">{highlightKindLabel(item.kind)}</span>
+                    <span className="status-tag accent">{highlightKindLabel(item.kind, props.language)}</span>
                     <span className="highlight-time mono-text">{formatCueTime(item.startMs)}</span>
                   </div>
                   <p>{highlightText(item.text, props.meetingTerms)}</p>
@@ -1728,11 +2360,14 @@ function HighlightsPanel(props: {
               ))}
             </div>
           ) : (
-            <div className="highlight-groups">
+            <div
+              className={isExpanded ? "highlight-groups scroll-shell highlight-scroll-region" : "highlight-groups"}
+              onWheel={isExpanded ? handleHighlightWheel : undefined}
+            >
               {groups.map((group) => (
                 <section key={group.kind} className="highlight-group">
                   <div className="section-head">
-                    <strong>{highlightKindLabel(group.kind)}</strong>
+                    <strong>{highlightKindLabel(group.kind, props.language)}</strong>
                     <span className="mono-text">{group.items.length}</span>
                   </div>
                   <div className="highlight-list">
@@ -1759,6 +2394,7 @@ function SummaryPanel(props: {
   detail: MeetingDetail | null;
   recording: RecordingSnapshot;
   meetingTerms: string[];
+  language: UiLanguage;
   qaInput: string;
   asking: boolean;
   onQaInputChange: (value: string) => void;
@@ -1769,9 +2405,9 @@ function SummaryPanel(props: {
   const stale = summaryNeedsRefresh(props.detail);
   const statusNode =
     summaryStatus === "error" ? (
-      <span className="summary-status summary-status-error">失败</span>
+      <span className="summary-status summary-status-error">{t(props.language, "error")}</span>
     ) : summaryStatus === "none" ? (
-      <span className="summary-status">未生成</span>
+      <span className="summary-status">{t(props.language, "waiting")}</span>
     ) : null;
 
   return (
@@ -1779,8 +2415,7 @@ function SummaryPanel(props: {
       <div className="result-header">
         <div className="section-head">
           <div>
-            <p className="eyebrow">AI Summary</p>
-            <h4>会议纪要</h4>
+            <h4>{t(props.language, "summary")}</h4>
           </div>
           <button
             className={
@@ -1795,42 +2430,45 @@ function SummaryPanel(props: {
             }
             type="button"
             onClick={props.onGenerateSummary}
-            aria-label={summaryStatus === "generating" ? "纪要生成中" : stale ? "重新生成纪要" : "生成纪要"}
+            aria-label={
+              summaryStatus === "generating"
+                ? t(props.language, "generating")
+                : stale
+                  ? t(props.language, "regenerate")
+                  : t(props.language, "generate")
+            }
           >
-            {summaryStatus === "generating" ? <LoadingDots label="纪要生成中" /> : "生成"}
+            {summaryStatus === "generating" ? <LoadingDots label={t(props.language, "generating")} /> : t(props.language, "generate")}
           </button>
         </div>
         {statusNode}
       </div>
       <div className="result-body">
         {!props.detail ? (
-          <p>先从左侧选择一场会议。</p>
+          <p>{t(props.language, "selectMeeting")}</p>
         ) : props.detail.session.summaryStatus === "generating" ? (
-          <p>AI 正在根据全文整理纪要，请稍候。</p>
+          <p>{t(props.language, "processingSummary")}</p>
         ) : props.detail.summary ? (
           <>
-            {props.meetingTerms.length > 0 ? (
-              <div className="term-strip subtle">
-                {props.meetingTerms.slice(0, 6).map((term) => (
-                  <span key={term} className="status-tag term-chip">
-                    {term}
-                  </span>
-                ))}
-              </div>
-            ) : null}
             <p>{highlightText(props.detail.summary.overview, props.meetingTerms)}</p>
             <p className="muted">
-              该纪要基于第 {props.detail.summary.sourceSegmentSeq} 段生成，
-              {props.detail.summary.generatedWhileStatus === "completed" ? "生成时会议已结束。" : "生成时会议仍在进行或暂停中。"}
+              {t(props.language, "generatedFromSegment")
+                .replace("{seq}", String(props.detail.summary.sourceSegmentSeq))
+                .replace(
+                  "{status}",
+                  props.detail.summary.generatedWhileStatus === "completed"
+                    ? t(props.language, "generatedWhenCompleted")
+                    : t(props.language, "generatedWhenLive")
+                )}
             </p>
-            {stale ? <p className="warning-text">会议又新增了转写内容，当前纪要不是最新版本，可以手动重新生成。</p> : null}
-            <strong>关键结论</strong>
+            {stale ? <p className="warning-text">{t(props.language, "staleSummary")}</p> : null}
+            <strong>{t(props.language, "keyPoints")}</strong>
             <ul>
               {props.detail.summary.bulletPoints.map((item) => (
                 <li key={item}>{highlightText(item, props.meetingTerms)}</li>
               ))}
             </ul>
-            <strong>待办事项</strong>
+            <strong>{t(props.language, "actionItems")}</strong>
             <ul>
               {props.detail.summary.actionItems.map((item) => (
                 <li key={item}>{highlightText(item, props.meetingTerms)}</li>
@@ -1838,7 +2476,7 @@ function SummaryPanel(props: {
             </ul>
             {props.detail.summary.risks.length > 0 ? (
               <>
-                <strong>风险与待确认</strong>
+                <strong>{t(props.language, "risks")}</strong>
                 <ul>
                   {props.detail.summary.risks.map((item) => (
                     <li key={item}>{highlightText(item, props.meetingTerms)}</li>
@@ -1848,37 +2486,40 @@ function SummaryPanel(props: {
             ) : null}
             <div className="qa-section">
               <div className="section-head">
-                <strong>会议问答</strong>
-                <span className="mono-text">{props.detail.qaItems.length} 条</span>
+                <strong>{t(props.language, "qa")}</strong>
+                <span className="mono-text">{countLabel(props.detail.qaItems.length, "itemUnit", props.language)}</span>
               </div>
               <div className="qa-list">
                 {props.detail.qaItems.map((item) => (
                   <article key={item.id} className="qa-item">
-                    <p className="qa-question">问：{highlightText(item.question, props.meetingTerms)}</p>
-                    <p className="qa-answer">答：{highlightText(item.answer, props.meetingTerms)}</p>
+                    <p className="qa-question">
+                      {t(props.language, "questionPrefix")}
+                      {highlightText(item.question, props.meetingTerms)}
+                    </p>
+                    <p className="qa-answer">
+                      {t(props.language, "answerPrefix")}
+                      {highlightText(item.answer, props.meetingTerms)}
+                    </p>
                   </article>
                 ))}
               </div>
               <div className="qa-compose">
                 <textarea
-                  placeholder="继续追问这场会议，例如：老师提出的具体要求是什么？"
+                  placeholder={t(props.language, "askPlaceholder")}
                   value={props.qaInput}
                   onChange={(event) => props.onQaInputChange(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter" && !event.shiftKey) {
-                      event.preventDefault();
-                      void props.onAskQuestion();
-                    }
-                  }}
                   rows={3}
                 />
+                <button disabled={props.asking || !props.qaInput.trim()} type="button" onClick={props.onAskQuestion}>
+                  {props.asking ? t(props.language, "generating") : t(props.language, "ask")}
+                </button>
               </div>
             </div>
           </>
         ) : (
-          <p>还没有纪要。有转写后即可生成，会议进行中也可以手动刷新。生成完成后，你也可以继续对会议内容发起多轮提问。</p>
+          <p>{t(props.language, "noSummary")}</p>
         )}
-        {props.recording.status === "processing" ? <p className="warning-text">会议正在整理最后几段，完成后再生成纪要会更完整。</p> : null}
+        {props.recording.status === "processing" ? <p className="warning-text">{t(props.language, "processingMoreComplete")}</p> : null}
       </div>
     </div>
   );
@@ -1888,6 +2529,7 @@ function ControlRail(props: {
   currentSession: MeetingSession | null;
   detail: MeetingDetail | null;
   recording: RecordingSnapshot;
+  language: UiLanguage;
   onPause: () => Promise<void>;
   onResume: () => Promise<void>;
   onStop: () => Promise<void>;
@@ -1907,27 +2549,26 @@ function ControlRail(props: {
       <div className="detail-card control-card">
         <div className="section-head">
           <div>
-            <p className="eyebrow">Controls</p>
-            <h4>录制控制</h4>
+            <h4>{t(props.language, "controls")}</h4>
           </div>
         </div>
 
         <div className="control-grid">
           <button className="danger-ghost" disabled={!canFinish} type="button" onClick={props.onStop}>
-            结束会议
+            {t(props.language, "stopMeeting")}
           </button>
           <button
             disabled={!canResume && !canPause}
             type="button"
             onClick={canPause ? props.onPause : props.onResume}
           >
-            {canPause ? "暂停" : "继续"}
+            {canPause ? t(props.language, "pause") : t(props.language, "resume")}
           </button>
           <button disabled={!props.detail} type="button" onClick={() => props.onExport("markdown")}>
-            导出 MD
+            {t(props.language, "exportMd")}
           </button>
           <button disabled={!props.detail} type="button" onClick={() => props.onExport("txt")}>
-            导出 TXT
+            {t(props.language, "exportTxt")}
           </button>
         </div>
       </div>
@@ -1936,6 +2577,7 @@ function ControlRail(props: {
 }
 
 function DeleteConfirmDialog(props: {
+  language: UiLanguage;
   session: MeetingSession;
   deleting: boolean;
   onCancel: () => void;
@@ -1950,16 +2592,18 @@ function DeleteConfirmDialog(props: {
         aria-labelledby="delete-dialog-title"
         onClick={(event) => event.stopPropagation()}
       >
-        <p className="eyebrow">Delete Meeting</p>
-        <h3 id="delete-dialog-title">确认删除这条会议记录？</h3>
-        <p className="muted">会议时间：{formatCompactDateTime(props.session.startedAt)}</p>
-        <p>删除后将同时移除全文转写、AI 纪要与问答记录，此操作不可撤销。</p>
+        <h3 id="delete-dialog-title">{t(props.language, "deleteTitle")}</h3>
+        <p className="muted">
+          {t(props.language, "deleteTime")}
+          {formatCompactDateTime(props.session.startedAt, props.language)}
+        </p>
+        <p>{t(props.language, "deleteDesc")}</p>
         <div className="modal-actions">
           <button className="secondary-button" disabled={props.deleting} type="button" onClick={props.onCancel}>
-            取消
+            {t(props.language, "cancel")}
           </button>
           <button className="danger-button" disabled={props.deleting} type="button" onClick={props.onConfirm}>
-            {props.deleting ? "删除中..." : "确认删除"}
+            {props.deleting ? t(props.language, "deleting") : t(props.language, "confirmDelete")}
           </button>
         </div>
       </div>

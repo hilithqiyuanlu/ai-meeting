@@ -117,7 +117,8 @@ export class OpenAICompatibleAsrProvider implements AsrProvider {
             audioIssues: []
           }),
           overlapDetected: false,
-          audioIssues: []
+          audioIssues: [],
+          processedInputLevel: inputLevel
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -133,7 +134,8 @@ export class OpenAICompatibleAsrProvider implements AsrProvider {
           latencyMs: Date.now() - decodeStartedAt,
           quality: "low",
           overlapDetected: false,
-          audioIssues: []
+          audioIssues: [],
+          processedInputLevel: inputLevel
         });
         this.callbacks.onError(new Error(`第 ${index + 1} 段转写失败：${message}`));
       }

@@ -5,7 +5,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
   {
-    ignores: ["dist", "dist-electron", "out", "node_modules", "coverage"]
+    ignores: ["dist", "dist-electron", "out", "node_modules", "coverage", "vendor"]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
@@ -24,7 +24,7 @@ export default tseslint.config(
     }
   },
   {
-    files: ["src/main/**/*.ts", "src/preload/**/*.ts"],
+    files: ["src/main/**/*.ts", "src/preload/**/*.ts", "scripts/**/*.mjs"],
     languageOptions: {
       globals: {
         ...globals.node

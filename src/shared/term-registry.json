@@ -1,0 +1,50 @@
+[
+  {
+    "canonical": "AI Meeting",
+    "aliases": ["ai meeting", "aimeeting"]
+  },
+  {
+    "canonical": "SenseVoice",
+    "aliases": ["sensevoice", "sense voice", "sense-voice"]
+  },
+  {
+    "canonical": "Ollama",
+    "aliases": ["ollama"]
+  },
+  {
+    "canonical": "BlackHole",
+    "aliases": ["blackhole", "black hole"]
+  },
+  {
+    "canonical": "VAD",
+    "aliases": ["vad"]
+  },
+  {
+    "canonical": "ASR",
+    "aliases": ["asr"]
+  },
+  {
+    "canonical": "AEC",
+    "aliases": ["aec"]
+  },
+  {
+    "canonical": "Qwen3.5",
+    "aliases": ["qwen3.5", "qwen 3.5", "qwen3 5", "qwen 3点5"]
+  },
+  {
+    "canonical": "Gemini 2.5",
+    "aliases": ["gemini 2.5", "gemini2.5", "gemini 2点5"]
+  },
+  {
+    "canonical": "Codex",
+    "aliases": ["codex"]
+  },
+  {
+    "canonical": "GPT",
+    "aliases": ["gpt"]
+  },
+  {
+    "canonical": "OpenAI",
+    "aliases": ["openai", "open ai"]
+  }
+]

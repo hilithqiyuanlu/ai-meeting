@@ -1,3 +1,5 @@
+import { normalizeWithTermRegistry } from "./term-registry";
+
 export function trimOverlappedTranscript(previous: string, current: string): { text: string; overlapChars: number } {
   const prev = previous.trim();
   const next = current.trim();
@@ -21,20 +23,8 @@ export function trimOverlappedTranscript(previous: string, current: string): { t
   return { text: next, overlapChars: 0 };
 }
 
-const terminologyMap: Array<[RegExp, string]> = [
-  [/\bai meeting\b/gi, "AI Meeting"],
-  [/\bollama\b/gi, "Ollama"],
-  [/\bsense[\s-]?voice\b/gi, "SenseVoice"],
-  [/\bblack[\s-]?hole\b/gi, "BlackHole"],
-  [/\bvad\b/gi, "VAD"],
-  [/\basr\b/gi, "ASR"],
-  [/\baec\b/gi, "AEC"],
-  [/qwen\s*3(?:\.|点)?5/gi, "Qwen3.5"],
-  [/gemini\s*2(?:\.|点)?5/gi, "Gemini 2.5"]
-];
-
 function normalizeTerminology(input: string): string {
-  return terminologyMap.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), input);
+  return normalizeWithTermRegistry(input);
 }
 
 function collapseRepeatingPhrases(input: string): string {
