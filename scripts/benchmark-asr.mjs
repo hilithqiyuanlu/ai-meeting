@@ -10,7 +10,7 @@ const require = createRequire(import.meta.url);
 const termRegistry = JSON.parse(await readFile(join(projectRoot, "src/shared/term-registry.json"), "utf8"));
 
 function parseArgs(argv) {
-  const args = { manifestPath: "", mode: "offline" };
+  const args = { manifestPath: "", mode: "offline", comparePath: "" };
   for (let index = 0; index < argv.length; index += 1) {
     const token = argv[index];
     if (!token) continue;
@@ -21,10 +21,23 @@ function parseArgs(argv) {
     if (token === "--mode") {
       args.mode = argv[index + 1] ?? "offline";
       index += 1;
+      continue;
+    }
+    if (token === "--compare") {
+      args.comparePath = argv[index + 1] ?? "";
+      index += 1;
     }
   }
   return args;
 }
+
+const DEFAULT_THRESHOLDS = {
+  maxCer: 0.18,
+  maxWer: 0.3,
+  maxLatencyMs: 5000,
+  maxLowQualityRate: 0.35,
+  minExpectedTermHitRate: 0.6
+};
 
 function levenshtein(a, b) {
   const rows = Array.from({ length: a.length + 1 }, () => Array(b.length + 1).fill(0));
@@ -202,13 +215,13 @@ function prepareAudioChunk(chunk, config) {
 
   applyHighPassFilter(samples);
   applySoftClipProtection(samples);
-  if (config.aecMode !== "off") {
+  if (config.aecMode !== "off" && config.audioProcessingBackend !== "system-voice-processing") {
     applyEchoAttenuation(samples);
   }
-  if (config.noiseSuppressionMode !== "off") {
+  if (config.noiseSuppressionMode !== "off" && config.audioProcessingBackend !== "system-voice-processing") {
     applyNoiseGate(samples, Math.max(0.004, rawMetrics.rms * 0.22));
   }
-  if (config.autoGainMode !== "off") {
+  if (config.autoGainMode !== "off" && config.audioProcessingBackend !== "system-voice-processing") {
     applyAutoGain(samples, rawMetrics);
   }
 
@@ -617,10 +630,92 @@ function aggregateResults(items) {
   };
 }
 
+function resolveThresholds(manifest) {
+  return {
+    ...DEFAULT_THRESHOLDS,
+    ...(manifest.thresholds ?? {})
+  };
+}
+
+function enrichEvaluatedItem(item, thresholds) {
+  const itemCer = cer(item.reference ?? "", item.hypothesis ?? "");
+  const itemWer = wer(item.reference ?? "", item.hypothesis ?? "");
+  const lowQualityRate = Number(item.segmentCount ?? 0) > 0 ? Number(item.lowQualitySegments ?? 0) / Number(item.segmentCount ?? 0) : 0;
+  const expectedTermHitRate = Number(item.expectedTermHitRate ?? deriveExpectedTermHitRate(item.expectedTerms ?? [], item.hypothesis));
+  const failureReasons = [];
+
+  if (!normalizeText(item.hypothesis)) failureReasons.push("empty");
+  if (item.error) failureReasons.push("error");
+  if (item.duplicate) failureReasons.push("duplicate");
+  if (itemCer > thresholds.maxCer) failureReasons.push("high-cer");
+  if (itemWer > thresholds.maxWer) failureReasons.push("high-wer");
+  if (Number(item.latencyMs ?? 0) > thresholds.maxLatencyMs) failureReasons.push("high-latency");
+  if (lowQualityRate > thresholds.maxLowQualityRate) failureReasons.push("high-low-quality-rate");
+  if ((item.expectedTerms ?? []).length > 0 && expectedTermHitRate < thresholds.minExpectedTermHitRate) {
+    failureReasons.push("low-expected-term-hit-rate");
+  }
+
+  return {
+    ...item,
+    cer: itemCer,
+    wer: itemWer,
+    lowQualityRate,
+    expectedTermHitRate,
+    failureReasons
+  };
+}
+
+function compareMetrics(current, baseline) {
+  if (!baseline) return null;
+  const metricKeys = [
+    "cer",
+    "wer",
+    "avgLatencyMs",
+    "p95LatencyMs",
+    "emptyRate",
+    "duplicateRate",
+    "errorRate",
+    "lowQualityRate",
+    "overlapRecall",
+    "expectedTermHitRate"
+  ];
+
+  return Object.fromEntries(
+    metricKeys.map((key) => [
+      key,
+      Number(((current?.[key] ?? 0) - (baseline?.[key] ?? 0)).toFixed(6))
+    ])
+  );
+}
+
+function buildComparison(current, baseline, comparePath) {
+  if (!baseline) {
+    return null;
+  }
+
+  const scenarioNames = new Set([
+    ...Object.keys(current.byScenario ?? {}),
+    ...Object.keys(baseline.byScenario ?? {})
+  ]);
+
+  return {
+    comparePath,
+    baselineSuite: baseline.suite ?? "unknown",
+    baselineMode: baseline.mode ?? "unknown",
+    overallDelta: compareMetrics(current.overall, baseline.overall),
+    byScenarioDelta: Object.fromEntries(
+      [...scenarioNames].map((scenario) => [
+        scenario,
+        compareMetrics(current.byScenario?.[scenario], baseline.byScenario?.[scenario])
+      ])
+    )
+  };
+}
+
 async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (!args.manifestPath) {
-    console.error("用法: pnpm benchmark:asr -- <manifest.json> [--mode offline|replay]");
+    console.error("用法: pnpm benchmark:asr -- <manifest.json> [--mode offline|replay] [--compare result.json]");
     process.exit(1);
   }
 
@@ -631,6 +726,7 @@ async function main() {
     process.exit(1);
   }
 
+  const thresholds = resolveThresholds(manifest);
   const mode = args.mode || manifest.mode || "offline";
   let evaluatedItems = items;
 
@@ -656,14 +752,30 @@ async function main() {
     }));
   }
 
+  const enrichedItems = evaluatedItems.map((item) => enrichEvaluatedItem(item, thresholds));
+  const aggregated = aggregateResults(enrichedItems);
+  const failures = enrichedItems.filter((item) => item.failureReasons.length > 0);
+  const comparePath = args.comparePath || manifest.comparePath || "";
+  const comparison = comparePath
+    ? buildComparison(
+        aggregated,
+        JSON.parse(await readFile(resolve(projectRoot, comparePath), "utf8")),
+        comparePath
+      )
+    : null;
+
   console.log(
     JSON.stringify(
       {
         suite: manifest.name ?? "unnamed-benchmark",
+        schemaVersion: "v0.4.6",
         mode,
         baseline: manifest.baseline ?? "v0.4.3",
-        ...aggregateResults(evaluatedItems),
-        items: evaluatedItems
+        thresholds,
+        ...aggregated,
+        failures,
+        items: enrichedItems,
+        comparison
       },
       null,
       2

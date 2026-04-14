@@ -2,6 +2,13 @@
   "name": "meeting-mic-regression",
   "baseline": "v0.4.3",
   "mode": "offline",
+  "thresholds": {
+    "maxCer": 0.18,
+    "maxWer": 0.3,
+    "maxLatencyMs": 5000,
+    "maxLowQualityRate": 0.35,
+    "minExpectedTermHitRate": 0.6
+  },
   "settings": {
     "modelDir": "/absolute/path/to/sensevoice-model",
     "language": "auto",

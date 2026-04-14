@@ -1,4 +1,4 @@
-# v0.4.4 Benchmark 说明
+# v0.4.6 Benchmark 说明
 
 把内部会议样本整理成一个 `manifest.json`，然后运行：
 
@@ -7,6 +7,12 @@ pnpm benchmark:asr -- benchmarks/manifest.json
 ```
 
 仓库内只提供 `benchmarks/manifest.example.json` 作为字段示例，不附带内部音频样本集。
+
+如需和上一次已保存的 benchmark 结果做对比：
+
+```bash
+pnpm benchmark:asr -- benchmarks/manifest.json --compare benchmarks/results/v0.4.5.json
+```
 
 如果要直接从本地 `16kHz / 16-bit / mono WAV` 回放进入当前 `VAD + 本地 SenseVoice + stitch` 管线：
 
@@ -21,6 +27,13 @@ SENSEVOICE_MODEL_DIR=/absolute/model-dir pnpm benchmark:asr -- benchmarks/manife
   "name": "meeting-mic-regression",
   "baseline": "v0.4.3",
   "mode": "offline",
+  "thresholds": {
+    "maxCer": 0.18,
+    "maxWer": 0.3,
+    "maxLatencyMs": 5000,
+    "maxLowQualityRate": 0.35,
+    "minExpectedTermHitRate": 0.6
+  },
   "settings": {
     "modelDir": "/absolute/path/to/model",
     "language": "auto",
@@ -82,6 +95,19 @@ SENSEVOICE_MODEL_DIR=/absolute/model-dir pnpm benchmark:asr -- benchmarks/manife
 
 说明：
 
-- `baseline` 当前只是结果标签，便于你手动对照 `v0.4.3`，脚本不会自动加载历史快照或自动 diff。
+- `baseline` 仍是版本标签；若需要自动 diff，请显式传 `--compare saved-result.json`。
 - `audioProcessingBackend` 在 `v0.4.5` 支持 `none / heuristic-apm / system-voice-processing`。
 - `system-voice-processing` 的效果需要通过真实麦克风录制验证；`replay` 模式不会模拟系统级处理收益。
+- 输出结构从 `v0.4.6` 开始冻结，包含：
+  - `schemaVersion`
+  - `thresholds`
+  - `overall`
+  - `byScenario`
+  - `failures`
+  - `items`
+  - `comparison`
+
+附加模板：
+
+- `benchmarks/DATASET_TEMPLATE.md`
+- `benchmarks/manual-regression-template.md`
