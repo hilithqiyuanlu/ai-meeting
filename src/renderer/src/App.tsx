@@ -875,6 +875,7 @@ function SettingsPanel(props: {
 }) {
   const { providerDraft, preferenceDraft, environment } = props;
   const localAsrSelected = providerDraft.asr.providerId === "sensevoice-local";
+  const localLlmSelected = providerDraft.llm.providerId === "ollama-local";
 
   return (
     <div className="stack">
@@ -1105,8 +1106,60 @@ function SettingsPanel(props: {
             <p className="eyebrow">LLM</p>
             <h4>纪要模型</h4>
           </div>
+          <div className="capture-mode-grid">
+            <button
+              className={providerDraft.llm.providerId === "gemini-openai-compatible" ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() =>
+                props.onProviderChange({
+                  ...providerDraft,
+                  llm: {
+                    ...providerDraft.llm,
+                    providerId: "gemini-openai-compatible",
+                    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+                    model: providerDraft.llm.model === "qwen3.5:4b" ? "gemini-2.5-flash" : providerDraft.llm.model
+                  }
+                })
+              }
+            >
+              Gemini
+            </button>
+            <button
+              className={providerDraft.llm.providerId === "openai-compatible-llm" ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() =>
+                props.onProviderChange({
+                  ...providerDraft,
+                  llm: {
+                    ...providerDraft.llm,
+                    providerId: "openai-compatible-llm"
+                  }
+                })
+              }
+            >
+              OpenAI-compatible
+            </button>
+            <button
+              className={localLlmSelected ? "nav-item active" : "nav-item"}
+              type="button"
+              onClick={() =>
+                props.onProviderChange({
+                  ...providerDraft,
+                  llm: {
+                    ...providerDraft.llm,
+                    providerId: "ollama-local",
+                    baseUrl: "http://127.0.0.1:11434",
+                    apiKey: "ollama",
+                    model: "qwen3.5:4b"
+                  }
+                })
+              }
+            >
+              Ollama 本地
+            </button>
+          </div>
           <label className="form-field">
-            <span>Base URL</span>
+            <span>{localLlmSelected ? "Ollama 地址" : "Base URL"}</span>
             <input
               value={providerDraft.llm.baseUrl}
               onChange={(event) =>
@@ -1117,19 +1170,23 @@ function SettingsPanel(props: {
               }
             />
           </label>
-          <label className="form-field">
-            <span>API Key</span>
-            <input
-              type="password"
-              value={providerDraft.llm.apiKey}
-              onChange={(event) =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  llm: { ...providerDraft.llm, apiKey: event.target.value }
-                })
-              }
-            />
-          </label>
+          {!localLlmSelected ? (
+            <label className="form-field">
+              <span>API Key</span>
+              <input
+                type="password"
+                value={providerDraft.llm.apiKey}
+                onChange={(event) =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    llm: { ...providerDraft.llm, apiKey: event.target.value }
+                  })
+                }
+              />
+            </label>
+          ) : (
+            <p className="muted">本地 Ollama 不依赖云端 API Key。当前推荐模型：qwen3.5:4b。</p>
+          )}
           <label className="form-field">
             <span>Model</span>
             <input
@@ -1142,7 +1199,7 @@ function SettingsPanel(props: {
               }
             />
           </label>
-          <p className="muted">默认推荐：gemini-2.5-flash</p>
+          <p className="muted">{localLlmSelected ? "纪要与问答将经由本机 Ollama 完成，实现全链路本地化。" : "默认推荐：gemini-2.5-flash"}</p>
         </div>
 
         <div className="settings-card settings-card-wide">
@@ -1193,8 +1250,8 @@ function SettingsPanel(props: {
             </div>
 
             <p className="muted">
-              麦克风模式适合线下会议；系统音频模式适合线上会议，需要提前完成 BlackHole 配置。本地 ASR 可离线转写，但 AI
-              纪要仍需要配置 LLM。
+              麦克风模式适合线下会议；系统音频模式适合线上会议，需要提前完成 BlackHole 配置。若同时选择本地 SenseVoice 和
+              Ollama，本应用即可实现转写、纪要、问答全链路本地化。
             </p>
 
             <div className="control-grid">

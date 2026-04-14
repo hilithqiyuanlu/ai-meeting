@@ -495,6 +495,20 @@ export class AppDatabase {
       merged.llm.model = "gemini-2.5-flash";
     }
 
+    if (merged.llm.providerId === "ollama-local") {
+      if (
+        !merged.llm.baseUrl ||
+        merged.llm.baseUrl === "https://generativelanguage.googleapis.com/v1beta/openai" ||
+        merged.llm.baseUrl.endsWith("/v1")
+      ) {
+        merged.llm.baseUrl = "http://127.0.0.1:11434";
+      }
+      if (!merged.llm.model || merged.llm.model === "gemini-2.5-flash") {
+        merged.llm.model = "qwen3.5:4b";
+      }
+      merged.llm.apiKey = merged.llm.apiKey || "ollama";
+    }
+
     if (merged.asr.providerId === "sensevoice-local") {
       merged.asr.runtime = "sherpa-onnx";
       merged.asr.localModelId = merged.asr.localModelId ?? "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09";

@@ -18,6 +18,7 @@ type SherpaOfflineRecognizer = {
 
 export function createSenseVoiceRecognizer(config: {
   modelPath: string;
+  tokensPath: string;
   language: string;
   useInverseTextNormalization: boolean;
 }): SherpaOfflineRecognizer {
@@ -34,6 +35,7 @@ export function createSenseVoiceRecognizer(config: {
         featureDim: 80
       },
       modelConfig: {
+        tokens: config.tokensPath,
         debug: 0,
         numThreads: 1,
         provider: "cpu",

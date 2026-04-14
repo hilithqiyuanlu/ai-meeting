@@ -1,7 +1,7 @@
 export type MeetingStatus = "idle" | "recording" | "paused" | "processing" | "completed" | "failed";
 
 export type AsrProviderId = "openai-compatible-asr" | "gemini-openai-audio" | "sensevoice-local";
-export type LlmProviderId = "openai-compatible-llm" | "gemini-openai-compatible";
+export type LlmProviderId = "openai-compatible-llm" | "gemini-openai-compatible" | "ollama-local";
 export type TranscriptSegmentKind = "speech" | "silence" | "unclear" | "error";
 export type AudioActivityState = "unknown" | "capturing" | "near-silence" | "no-signal" | "device-error";
 export type CaptureMode = "microphone" | "system-audio";

@@ -12,6 +12,7 @@ import { GeminiOpenAIAudioAsrProvider } from "@main/providers/asr/gemini-openai-
 import { SenseVoiceLocalProvider } from "@main/providers/asr/sensevoice-local";
 import type { AsrProvider } from "@main/providers/asr/base";
 import { OpenAICompatibleLlmProvider } from "@main/providers/llm/openai-compatible-llm";
+import { OllamaLocalLlmProvider } from "@main/providers/llm/ollama-local-llm";
 import { AppDatabase } from "./database";
 import { EnvironmentService } from "./environment-service";
 import { ExportService } from "./export-service";
@@ -221,7 +222,7 @@ export class MeetingService {
       throw new Error("当前会议还没有可用转写内容");
     }
 
-    const provider = new OpenAICompatibleLlmProvider(this.db.getProviderConfig().llm);
+    const provider = this.createLlmProvider();
     const sourceSegmentSeq = detail.transcriptSegments.at(-1)?.seq ?? 0;
     const sourceTranscriptChars = detail.session.transcriptText.length;
     const generatedWhileStatus =
@@ -272,7 +273,7 @@ export class MeetingService {
       throw new Error("先完成有效转写，再进行会议问答。");
     }
 
-    const provider = new OpenAICompatibleLlmProvider(this.db.getProviderConfig().llm);
+    const provider = this.createLlmProvider();
     const answer = await provider.answerQuestion({
       transcript: detail.session.transcriptText,
       title: detail.session.title,
@@ -396,6 +397,13 @@ export class MeetingService {
         this.emit("recording-state", this.recording);
       }
     };
+  }
+
+  private createLlmProvider(): OpenAICompatibleLlmProvider | OllamaLocalLlmProvider {
+    const llmConfig = this.db.getProviderConfig().llm;
+    return llmConfig.providerId === "ollama-local"
+      ? new OllamaLocalLlmProvider(llmConfig)
+      : new OpenAICompatibleLlmProvider(llmConfig);
   }
 
   private bumpRecordingCounters(segment: TranscriptSegment): void {

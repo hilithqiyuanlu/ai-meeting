@@ -68,6 +68,7 @@ export class SenseVoiceLocalProvider implements AsrProvider {
 
     this.recognizer = createSenseVoiceRecognizer({
       modelPath: join(modelDir, "model.int8.onnx"),
+      tokensPath: join(modelDir, "tokens.txt"),
       language: this.config.language,
       useInverseTextNormalization: true
     });
