@@ -1,6 +1,6 @@
 {
   "name": "ai-meeting",
-  "version": "0.3.2",
+  "version": "0.4.2",
   "description": "macOS meeting recorder with realtime transcription and AI summaries",
   "private": true,
   "type": "module",
@@ -13,7 +13,8 @@
     "lint": "eslint . --ext .ts,.tsx",
     "rebuild:native": "electron-rebuild -f -w better-sqlite3",
     "swift:build": "swift build --package-path swift/SystemAudioCaptureHelper -c release",
-    "test": "vitest run"
+    "test": "vitest run",
+    "benchmark:asr": "node scripts/benchmark-asr.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^11.8.1",

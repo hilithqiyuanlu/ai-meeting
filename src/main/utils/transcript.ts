@@ -20,3 +20,94 @@ export function trimOverlappedTranscript(previous: string, current: string): { t
 
   return { text: next, overlapChars: 0 };
 }
+
+const terminologyMap: Array<[RegExp, string]> = [
+  [/\bai meeting\b/gi, "AI Meeting"],
+  [/\bollama\b/gi, "Ollama"],
+  [/\bsense[\s-]?voice\b/gi, "SenseVoice"],
+  [/\bblack[\s-]?hole\b/gi, "BlackHole"],
+  [/\bvad\b/gi, "VAD"],
+  [/\basr\b/gi, "ASR"],
+  [/\baec\b/gi, "AEC"],
+  [/qwen\s*3(?:\.|点)?5/gi, "Qwen3.5"],
+  [/gemini\s*2(?:\.|点)?5/gi, "Gemini 2.5"]
+];
+
+function normalizeTerminology(input: string): string {
+  return terminologyMap.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), input);
+}
+
+function collapseRepeatingPhrases(input: string): string {
+  const words = input.split(/\s+/).filter(Boolean);
+  if (words.length < 4) {
+    return input;
+  }
+
+  const collapsed: string[] = [];
+  for (const word of words) {
+    if (collapsed.length >= 2 && collapsed.at(-1) === word && collapsed.at(-2) === word) {
+      continue;
+    }
+    collapsed.push(word);
+  }
+  return collapsed.join(" ");
+}
+
+function collapseRepeatingClauses(input: string): string {
+  const clauses = input.split(/(?<=[，。！？!?])/).map((item) => item.trim()).filter(Boolean);
+  if (clauses.length < 2) {
+    return input;
+  }
+
+  const deduped: string[] = [];
+  for (const clause of clauses) {
+    if (deduped.at(-1) === clause) {
+      continue;
+    }
+    deduped.push(clause);
+  }
+  return deduped.join("");
+}
+
+function normalizeForCompare(input: string): string {
+  return input.replace(/\s+/g, "").replace(/[，。！？!?、,.:：；;]/g, "").toLowerCase();
+}
+
+export function normalizeTranscriptText(input: string): string {
+  return collapseRepeatingClauses(
+    collapseRepeatingPhrases(
+      normalizeTerminology(
+        input
+          .replace(/\s+/g, " ")
+          .replace(/[，。！？,.!?]{2,}/g, "。")
+          .replace(/^\s*[嗯啊呃]+\s*/g, "")
+          .replace(/\b([A-Za-z]+)(\s+\1\b)+/gi, "$1")
+          .trim()
+      )
+    )
+  );
+}
+
+export function stitchTranscript(previous: string, current: string): { text: string; overlapChars: number } {
+  const normalized = normalizeTranscriptText(current);
+  const previousNormalized = normalizeTranscriptText(previous);
+
+  if (!normalized) {
+    return { text: "", overlapChars: 0 };
+  }
+
+  const previousCompare = normalizeForCompare(previousNormalized);
+  const currentCompare = normalizeForCompare(normalized);
+
+  if (previousCompare && (previousCompare === currentCompare || previousCompare.endsWith(currentCompare))) {
+    return { text: "", overlapChars: normalized.length };
+  }
+
+  const stitched = trimOverlappedTranscript(previousNormalized, normalized);
+  const stitchedCompare = normalizeForCompare(stitched.text);
+  if (previousCompare && stitchedCompare && previousCompare.endsWith(stitchedCompare)) {
+    return { text: "", overlapChars: stitched.overlapChars || stitched.text.length };
+  }
+
+  return stitched;
+}

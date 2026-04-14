@@ -8,6 +8,11 @@ export type CaptureMode = "microphone" | "system-audio";
 export type AsrRuntime = "cloud" | "sherpa-onnx";
 export type LocalAsrLanguage = "auto" | "zh" | "yue" | "en" | "ja" | "ko";
 export type LocalAsrModelState = "not-downloaded" | "downloading" | "ready" | "error";
+export type AsrLatencyMode = "fast" | "balanced" | "accurate";
+export type AudioProcessingMode = "auto" | "off" | "on";
+export type TranscriptQuality = "high" | "medium" | "low";
+export type AudioIssue = "echo" | "noise" | "low-level" | "clipping";
+export type HighlightKind = "decision" | "action" | "risk" | "follow-up";
 
 export interface MeetingSession {
   id: string;
@@ -37,6 +42,21 @@ export interface TranscriptSegment {
   note: string | null;
   inputLevel: number;
   overlapChars: number;
+  processingMs: number;
+  latencyMs: number;
+  quality: TranscriptQuality;
+  overlapDetected: boolean;
+  audioIssues: AudioIssue[];
+  createdAt: string;
+}
+
+export interface MeetingHighlight {
+  id: string;
+  sessionId: string;
+  segmentId: string;
+  seq: number;
+  kind: HighlightKind;
+  text: string;
   createdAt: string;
 }
 
@@ -75,6 +95,17 @@ export interface ProviderConfig {
     localModelId: string | null;
     localModelDir: string | null;
     localLanguage: LocalAsrLanguage;
+    latencyMode: AsrLatencyMode;
+    vadEnabled: boolean;
+    vadThreshold: number;
+    vadPreRollMs: number;
+    vadPostRollMs: number;
+    minSpeechMs: number;
+    maxSpeechMs: number;
+    aecMode: AudioProcessingMode;
+    noiseSuppressionMode: AudioProcessingMode;
+    autoGainMode: AudioProcessingMode;
+    overlapDetectionEnabled: boolean;
   };
   llm: {
     providerId: LlmProviderId;
@@ -130,6 +161,7 @@ export interface EnvironmentStatus {
 export interface MeetingDetail {
   session: MeetingSession;
   transcriptSegments: TranscriptSegment[];
+  highlights: MeetingHighlight[];
   summary: MeetingSummary | null;
   qaItems: MeetingQaItem[];
 }
@@ -151,6 +183,12 @@ export interface RecordingSnapshot {
   unclearSegments: number;
   failedSegments: number;
   consecutiveAsrFailures: number;
+  consecutiveLowQualitySegments: number;
+  latencyMode: AsrLatencyMode;
+  currentLatencyMs: number | null;
+  lastOverlapAt: string | null;
+  inputQuality: TranscriptQuality;
+  lastAudioIssues: AudioIssue[];
   errorMessage: string | null;
 }
 
@@ -186,6 +224,10 @@ export interface AppEventMap {
   "summary-updated": {
     sessionId: string;
     summary: MeetingSummary | null;
+  };
+  "highlight-added": {
+    sessionId: string;
+    highlight: MeetingHighlight;
   };
   "local-model-updated": LocalAsrStatus;
   error: {

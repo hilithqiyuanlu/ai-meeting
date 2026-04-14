@@ -1,32 +1,11 @@
 import { join } from "node:path";
-import type { LocalAsrLanguage } from "@shared/types";
+import type { CaptureMode, LocalAsrLanguage, ProviderConfig } from "@shared/types";
 import { LocalAsrModelService } from "@main/services/local-asr-model-service";
 import { createSenseVoiceRecognizer } from "@main/utils/sherpa-onnx";
+import { classifyTranscriptQuality, pcm16ToFloat32, prepareAudioChunk } from "@main/utils/audio-pipeline";
+import { stitchTranscript } from "@main/utils/transcript";
+import { VadSegmenter } from "@main/utils/vad";
 import type { AsrProvider, AsrProviderCallbacks } from "./base";
-
-function measureLevel(chunk: Buffer): number {
-  if (chunk.length < 2) {
-    return 0;
-  }
-
-  let sum = 0;
-  let count = 0;
-  for (let index = 0; index + 1 < chunk.length; index += 2) {
-    const sample = chunk.readInt16LE(index) / 32768;
-    sum += sample * sample;
-    count += 1;
-  }
-
-  return count === 0 ? 0 : Math.sqrt(sum / count);
-}
-
-function pcm16ToFloat32(chunk: Buffer): Float32Array {
-  const samples = new Float32Array(Math.floor(chunk.length / 2));
-  for (let index = 0; index < samples.length; index += 1) {
-    samples[index] = chunk.readInt16LE(index * 2) / 32768;
-  }
-  return samples;
-}
 
 type SenseVoiceLocalProviderConfig = {
   chunkMs: number;
@@ -34,29 +13,81 @@ type SenseVoiceLocalProviderConfig = {
   modelDir: string | null;
   language: LocalAsrLanguage;
   modelService: LocalAsrModelService;
+  captureMode: CaptureMode;
+  asr: Pick<
+    ProviderConfig["asr"],
+    | "latencyMode"
+    | "vadEnabled"
+    | "vadThreshold"
+    | "vadPreRollMs"
+    | "vadPostRollMs"
+    | "minSpeechMs"
+    | "maxSpeechMs"
+    | "aecMode"
+    | "noiseSuppressionMode"
+    | "autoGainMode"
+    | "overlapDetectionEnabled"
+  >;
 };
+
+function deriveVadStrategy(config: SenseVoiceLocalProviderConfig["asr"]) {
+  if (config.latencyMode === "fast") {
+    return {
+      threshold: Math.max(0.008, config.vadThreshold * 0.95),
+      preRollMs: Math.max(120, Math.round(config.vadPreRollMs * 0.8)),
+      postRollMs: Math.max(180, Math.round(config.vadPostRollMs * 0.72)),
+      minSpeechMs: Math.max(300, Math.round(config.minSpeechMs * 0.65)),
+      maxSpeechMs: Math.max(2200, Math.round(config.maxSpeechMs * 0.72))
+    };
+  }
+
+  if (config.latencyMode === "accurate") {
+    return {
+      threshold: config.vadThreshold,
+      preRollMs: Math.round(config.vadPreRollMs * 1.15),
+      postRollMs: Math.round(config.vadPostRollMs * 1.25),
+      minSpeechMs: Math.round(config.minSpeechMs * 1.15),
+      maxSpeechMs: Math.round(config.maxSpeechMs * 1.15)
+    };
+  }
+
+  return {
+    threshold: config.vadThreshold,
+    preRollMs: config.vadPreRollMs,
+    postRollMs: config.vadPostRollMs,
+    minSpeechMs: config.minSpeechMs,
+    maxSpeechMs: config.maxSpeechMs
+  };
+}
 
 type OfflineRecognizer = ReturnType<typeof createSenseVoiceRecognizer>;
 
 export class SenseVoiceLocalProvider implements AsrProvider {
   private readonly sampleRate = 16000;
-  private readonly overlapMs = 1000;
   private readonly bytesPerChunk: number;
-  private readonly overlapBytes: number;
-  private readonly stepBytes: number;
   private buffer = Buffer.alloc(0);
   private processing = Promise.resolve();
   private chunkIndex = 0;
   private started = false;
   private recognizer: OfflineRecognizer | null = null;
+  private readonly vadSegmenter: VadSegmenter;
+  private lastFinalText = "";
 
   constructor(
     private readonly config: SenseVoiceLocalProviderConfig,
     private readonly callbacks: AsrProviderCallbacks
   ) {
     this.bytesPerChunk = Math.max(1000, Math.floor((config.chunkMs / 1000) * this.sampleRate * 2));
-    this.overlapBytes = Math.min(Math.floor((this.overlapMs / 1000) * this.sampleRate * 2), Math.floor(this.bytesPerChunk / 2));
-    this.stepBytes = this.bytesPerChunk - this.overlapBytes;
+    const strategy = deriveVadStrategy(config.asr);
+    this.vadSegmenter = new VadSegmenter({
+      sampleRate: this.sampleRate,
+      frameMs: 30,
+      threshold: strategy.threshold,
+      preRollMs: strategy.preRollMs,
+      postRollMs: strategy.postRollMs,
+      minSpeechMs: strategy.minSpeechMs,
+      maxSpeechMs: strategy.maxSpeechMs
+    });
   }
 
   async start(): Promise<void> {
@@ -73,7 +104,9 @@ export class SenseVoiceLocalProvider implements AsrProvider {
       useInverseTextNormalization: true
     });
     this.started = true;
-    this.callbacks.onStatus(`SenseVoice 本地 ASR 已就绪 (${this.config.modelId})`);
+    this.callbacks.onStatus(
+      `SenseVoice 本地 ASR 已就绪 (${this.config.modelId}) · ${this.config.asr.vadEnabled ? `VAD ${this.config.asr.latencyMode}` : "固定分段"}`
+    );
   }
 
   async sendAudio(chunk: Buffer): Promise<void> {
@@ -81,18 +114,38 @@ export class SenseVoiceLocalProvider implements AsrProvider {
       return;
     }
 
-    this.buffer = Buffer.concat([this.buffer, chunk]);
-    while (this.buffer.length >= this.bytesPerChunk) {
-      const current = this.buffer.subarray(0, this.bytesPerChunk);
-      this.buffer = this.buffer.subarray(this.stepBytes);
-      this.enqueueChunk(current, this.chunkIndex * this.stepBytes);
+    if (!this.config.asr.vadEnabled) {
+      this.buffer = Buffer.concat([this.buffer, chunk]);
+      while (this.buffer.length >= this.bytesPerChunk) {
+        const current = this.buffer.subarray(0, this.bytesPerChunk);
+        this.buffer = this.buffer.subarray(this.bytesPerChunk);
+        this.enqueueChunk(current, this.chunkIndex * this.config.chunkMs, this.chunkIndex * this.config.chunkMs + this.config.chunkMs);
+      }
+      return;
+    }
+
+    const segments = this.vadSegmenter.push(chunk);
+    if (segments.length === 0) {
+      this.callbacks.onPartialText("正在监听麦克风，等待稳定语音...");
+      return;
+    }
+
+    for (const segment of segments) {
+      this.enqueueChunk(segment.pcm, segment.startMs, segment.endMs, segment.inputLevel);
     }
   }
 
   async stop(): Promise<void> {
-    if (this.buffer.length > this.overlapBytes / 2) {
-      this.enqueueChunk(this.buffer, this.chunkIndex * this.stepBytes);
+    if (!this.config.asr.vadEnabled && this.buffer.length > 0) {
+      const durationMs = Math.round((this.buffer.length / 2 / this.sampleRate) * 1000);
+      this.enqueueChunk(this.buffer, this.chunkIndex * this.config.chunkMs, this.chunkIndex * this.config.chunkMs + durationMs);
       this.buffer = Buffer.alloc(0);
+    }
+
+    if (this.config.asr.vadEnabled) {
+      for (const segment of this.vadSegmenter.flush()) {
+        this.enqueueChunk(segment.pcm, segment.startMs, segment.endMs, segment.inputLevel);
+      }
     }
 
     await this.processing;
@@ -101,41 +154,62 @@ export class SenseVoiceLocalProvider implements AsrProvider {
     this.started = false;
   }
 
-  private enqueueChunk(chunk: Buffer, byteOffset: number): void {
+  private enqueueChunk(chunk: Buffer, startMs: number, endMs: number, fallbackInputLevel?: number): void {
     const recognizer = this.recognizer;
     if (!recognizer) {
       return;
     }
 
     const index = this.chunkIndex++;
-    const startMs = Math.round((byteOffset / 2 / this.sampleRate) * 1000);
-    const endMs = startMs + Math.round((chunk.length / 2 / this.sampleRate) * 1000);
-    const inputLevel = measureLevel(chunk);
-    const overlapChars = Math.round((this.overlapBytes / 2 / this.sampleRate) * 10) / 10;
-
-    this.callbacks.onPartialText(`正在用 SenseVoice 识别第 ${index + 1} 段音频...`);
+    this.callbacks.onPartialText(`正在用 SenseVoice 识别第 ${index + 1} 段高价值语音...`);
     this.processing = this.processing.then(async () => {
+      const prepared = prepareAudioChunk(chunk, {
+        noiseSuppressionMode: this.config.asr.noiseSuppressionMode,
+        autoGainMode: this.config.asr.autoGainMode,
+        overlapDetectionEnabled: this.config.asr.overlapDetectionEnabled
+      });
+
+      const decodeStartedAt = Date.now();
       const stream = recognizer.createStream();
       try {
-        stream.acceptWaveform(this.sampleRate, pcm16ToFloat32(chunk));
+        stream.acceptWaveform(this.sampleRate, pcm16ToFloat32(prepared.pcm));
         recognizer.decode(stream);
-        const text = (recognizer.getResult(stream).text ?? "").trim();
-        const kind = text ? "speech" : inputLevel >= 0.012 ? "unclear" : "silence";
-        const note =
-          kind === "silence"
-            ? "这一段接近静音，没有检测到可识别人声。"
-            : kind === "unclear"
-              ? "这一段有音频活动，但没有识别出稳定文字。"
-              : null;
+        const rawText = (recognizer.getResult(stream).text ?? "").trim();
+        const stitched = stitchTranscript(this.lastFinalText, rawText);
+        const text = stitched.text;
+        const inputLevel = fallbackInputLevel ?? prepared.metrics.rms;
+        const baseKind = text ? "speech" : inputLevel >= this.config.asr.vadThreshold ? "unclear" : "silence";
+        const processingMs = Date.now() - decodeStartedAt;
+        const latencyBudget = this.config.asr.vadEnabled ? this.config.asr.vadPostRollMs : this.config.chunkMs;
+        const latencyMs = processingMs + latencyBudget;
+        const quality = classifyTranscriptQuality({
+          text,
+          kind: baseKind,
+          processingMs,
+          latencyMs,
+          inputLevel,
+          overlapDetected: prepared.overlapDetected,
+          audioIssues: prepared.audioIssues
+        });
+        const note = this.buildNote(baseKind, prepared.audioIssues, prepared.overlapDetected, quality);
+
+        if (baseKind === "speech" && text) {
+          this.lastFinalText = text;
+        }
 
         await this.callbacks.onFinalText({
           text,
           startMs,
           endMs,
-          kind,
+          kind: baseKind,
           note,
           inputLevel,
-          overlapChars
+          overlapChars: stitched.overlapChars,
+          processingMs,
+          latencyMs,
+          quality,
+          overlapDetected: prepared.overlapDetected,
+          audioIssues: prepared.audioIssues
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -145,13 +219,54 @@ export class SenseVoiceLocalProvider implements AsrProvider {
           endMs,
           kind: "error",
           note: message,
-          inputLevel,
-          overlapChars
+          inputLevel: fallbackInputLevel ?? prepared.metrics.rms,
+          overlapChars: 0,
+          processingMs: Date.now() - decodeStartedAt,
+          latencyMs: Date.now() - decodeStartedAt,
+          quality: "low",
+          overlapDetected: prepared.overlapDetected,
+          audioIssues: prepared.audioIssues
         });
         this.callbacks.onError(new Error(`SenseVoice 第 ${index + 1} 段识别失败：${message}`));
       } finally {
         stream.free();
       }
     });
+  }
+
+  private buildNote(
+    kind: "speech" | "silence" | "unclear" | "error",
+    audioIssues: string[],
+    overlapDetected: boolean,
+    quality: "high" | "medium" | "low"
+  ): string | null {
+    if (kind === "silence") {
+      return "该时段未检测到稳定语音，已跳过本地识别。";
+    }
+    if (kind === "unclear") {
+      return "检测到短语音或噪声活动，但不足以生成稳定文本。";
+    }
+
+    const warnings: string[] = [];
+    if (overlapDetected) {
+      warnings.push("检测到重叠发言");
+    }
+    if (audioIssues.includes("echo")) {
+      warnings.push(this.config.captureMode === "microphone" ? "疑似扬声器回声" : "疑似回声");
+    }
+    if (audioIssues.includes("noise")) {
+      warnings.push("噪声偏高");
+    }
+    if (audioIssues.includes("low-level")) {
+      warnings.push("输入偏弱");
+    }
+    if (audioIssues.includes("clipping")) {
+      warnings.push("输入过载");
+    }
+    if (quality === "low" && warnings.length === 0) {
+      warnings.push("该段置信度较低");
+    }
+
+    return warnings.length > 0 ? warnings.join("，") : null;
   }
 }

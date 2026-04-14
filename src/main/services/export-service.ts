@@ -33,6 +33,11 @@ export class ExportService {
       lines.push("### 风险与未决问题", ...detail.summary.risks.map((item) => `- ${item}`), "");
     }
 
+    if (detail.highlights.length > 0) {
+      lines.push("## 会中重点提醒", "");
+      lines.push(...detail.highlights.map((item) => `- [${item.kind}] ${item.text}`), "");
+    }
+
     lines.push("## 全文转写", "");
     for (const segment of detail.transcriptSegments) {
       lines.push(`- [${segment.startMs}ms - ${segment.endMs}ms] ${this.formatSegment(segment, true)}`);
@@ -56,7 +61,12 @@ export class ExportService {
 
   private formatSegment(detailSegment: MeetingDetail["transcriptSegments"][number], includePlaceholders: boolean): string {
     if (detailSegment.kind === "speech") {
-      return detailSegment.text;
+      const issueText = detailSegment.overlapDetected
+        ? " [重叠发言]"
+        : detailSegment.quality === "low"
+          ? " [低置信]"
+          : "";
+      return `${detailSegment.text}${issueText}`;
     }
 
     if (!includePlaceholders) {

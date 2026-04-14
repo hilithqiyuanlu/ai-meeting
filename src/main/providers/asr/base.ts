@@ -1,4 +1,4 @@
-import type { TranscriptSegmentKind } from "@shared/types";
+import type { AudioIssue, TranscriptQuality, TranscriptSegmentKind } from "@shared/types";
 
 export interface AsrProviderCallbacks {
   onPartialText: (text: string) => void;
@@ -10,6 +10,11 @@ export interface AsrProviderCallbacks {
     note: string | null;
     inputLevel: number;
     overlapChars: number;
+    processingMs: number;
+    latencyMs: number;
+    quality: TranscriptQuality;
+    overlapDetected: boolean;
+    audioIssues: AudioIssue[];
   }) => Promise<void>;
   onStatus: (status: string) => void;
   onError: (error: Error) => void;

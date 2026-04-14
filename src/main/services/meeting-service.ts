@@ -3,9 +3,10 @@ import type {
   AudioActivityState,
   AppEventMap,
   MeetingDetail,
+  MeetingHighlight,
   RecordingSnapshot,
-  TranscriptSegment,
-  StartMeetingInput
+  StartMeetingInput,
+  TranscriptSegment
 } from "@shared/types";
 import { OpenAICompatibleAsrProvider } from "@main/providers/asr/openai-compatible-asr";
 import { GeminiOpenAIAudioAsrProvider } from "@main/providers/asr/gemini-openai-audio";
@@ -18,7 +19,8 @@ import { EnvironmentService } from "./environment-service";
 import { ExportService } from "./export-service";
 import { SystemAudioHelperClient } from "./audio-helper";
 import { computePcmRms, getAudioState } from "@main/utils/audio";
-import { trimOverlappedTranscript } from "@main/utils/transcript";
+import { extractHighlightCandidates } from "@main/utils/highlights";
+import { stitchTranscript } from "@main/utils/transcript";
 import { LocalAsrModelService } from "./local-asr-model-service";
 
 export class MeetingService {
@@ -39,6 +41,12 @@ export class MeetingService {
     unclearSegments: 0,
     failedSegments: 0,
     consecutiveAsrFailures: 0,
+    consecutiveLowQualitySegments: 0,
+    latencyMode: "balanced",
+    currentLatencyMs: null,
+    lastOverlapAt: null,
+    inputQuality: "low",
+    lastAudioIssues: [],
     errorMessage: null
   };
 
@@ -212,6 +220,19 @@ export class MeetingService {
     return this.db.getMeetingDetail(sessionId);
   }
 
+  async renameMeeting(sessionId: string, title: string): Promise<MeetingDetail> {
+    const nextTitle = title.trim();
+    if (!nextTitle) {
+      throw new Error("会议名称不能为空");
+    }
+
+    const updated = this.db.updateSession(sessionId, {
+      title: nextTitle
+    });
+    this.emit("session-updated", updated);
+    return this.db.getMeetingDetail(sessionId);
+  }
+
   async generateSummary(sessionId: string): Promise<MeetingDetail> {
     if (this.summaryJobs.has(sessionId)) {
       throw new Error("这场会议的纪要已经在生成中，请稍候。");
@@ -337,10 +358,15 @@ export class MeetingService {
         note: string | null;
         inputLevel: number;
         overlapChars: number;
+        processingMs: number;
+        latencyMs: number;
+        quality: TranscriptSegment["quality"];
+        overlapDetected: boolean;
+        audioIssues: TranscriptSegment["audioIssues"];
       }) => {
         const nextSpeech =
           payload.kind === "speech"
-            ? trimOverlappedTranscript(this.lastSpeechText, payload.text)
+            ? stitchTranscript(this.lastSpeechText, payload.text)
             : { text: payload.text, overlapChars: payload.overlapChars };
 
         const segment = this.db.appendTranscriptSegment({
@@ -353,7 +379,12 @@ export class MeetingService {
           kind: payload.kind,
           note: payload.note,
           inputLevel: payload.inputLevel,
-          overlapChars: payload.kind === "speech" ? nextSpeech.overlapChars : payload.overlapChars
+          overlapChars: payload.kind === "speech" ? nextSpeech.overlapChars : payload.overlapChars,
+          processingMs: payload.processingMs,
+          latencyMs: payload.latencyMs,
+          quality: payload.quality,
+          overlapDetected: payload.overlapDetected,
+          audioIssues: payload.audioIssues
         });
 
         const currentSession = this.db.getSession(sessionId);
@@ -371,6 +402,7 @@ export class MeetingService {
         this.bumpRecordingCounters(segment);
         if (segment.kind === "speech" && segment.text) {
           this.lastSpeechText = segment.text;
+          this.maybeCreateHighlights(sessionId, segment);
         }
 
         this.emit("transcript-final", {
@@ -416,25 +448,42 @@ export class MeetingService {
         lastTranscriptAt: now,
         successfulSegments: this.recording.successfulSegments + 1,
         consecutiveAsrFailures: 0,
+        consecutiveLowQualitySegments:
+          segment.quality === "low" ? this.recording.consecutiveLowQualitySegments + 1 : 0,
+        currentLatencyMs: segment.latencyMs,
+        lastOverlapAt: segment.overlapDetected ? now : this.recording.lastOverlapAt,
+        inputQuality: segment.quality,
+        lastAudioIssues: segment.audioIssues,
         errorMessage: null
       };
     } else if (segment.kind === "silence") {
       this.recording = {
         ...this.recording,
-        silentSegments: this.recording.silentSegments + 1
+        silentSegments: this.recording.silentSegments + 1,
+        currentLatencyMs: segment.latencyMs,
+        inputQuality: "low",
+        lastAudioIssues: segment.audioIssues
       };
     } else if (segment.kind === "unclear") {
       this.recording = {
         ...this.recording,
         audioState: "capturing",
         lastAudioAt: now,
-        unclearSegments: this.recording.unclearSegments + 1
+        unclearSegments: this.recording.unclearSegments + 1,
+        consecutiveLowQualitySegments: this.recording.consecutiveLowQualitySegments + 1,
+        currentLatencyMs: segment.latencyMs,
+        inputQuality: "low",
+        lastAudioIssues: segment.audioIssues
       };
     } else {
       this.recording = {
         ...this.recording,
         failedSegments: this.recording.failedSegments + 1,
         consecutiveAsrFailures: this.recording.consecutiveAsrFailures + 1,
+        consecutiveLowQualitySegments: this.recording.consecutiveLowQualitySegments + 1,
+        currentLatencyMs: segment.latencyMs,
+        inputQuality: "low",
+        lastAudioIssues: segment.audioIssues,
         errorMessage: segment.note
       };
     }
@@ -497,6 +546,12 @@ export class MeetingService {
       unclearSegments: 0,
       failedSegments: 0,
       consecutiveAsrFailures: 0,
+      consecutiveLowQualitySegments: 0,
+      latencyMode: this.db.getProviderConfig().asr.latencyMode,
+      currentLatencyMs: null,
+      lastOverlapAt: null,
+      inputQuality: "low",
+      lastAudioIssues: [],
       errorMessage: null
     };
   }
@@ -513,7 +568,21 @@ export class MeetingService {
               modelId: providerConfig.asr.localModelId || this.localAsrModelService.getModelId(),
               modelDir: providerConfig.asr.localModelDir,
               language: providerConfig.asr.localLanguage,
-              modelService: this.localAsrModelService
+              modelService: this.localAsrModelService,
+              captureMode: this.recording.captureMode,
+              asr: {
+                latencyMode: providerConfig.asr.latencyMode,
+                vadEnabled: providerConfig.asr.vadEnabled,
+                vadThreshold: providerConfig.asr.vadThreshold,
+                vadPreRollMs: providerConfig.asr.vadPreRollMs,
+                vadPostRollMs: providerConfig.asr.vadPostRollMs,
+                minSpeechMs: providerConfig.asr.minSpeechMs,
+                maxSpeechMs: providerConfig.asr.maxSpeechMs,
+                aecMode: providerConfig.asr.aecMode,
+                noiseSuppressionMode: providerConfig.asr.noiseSuppressionMode,
+                autoGainMode: providerConfig.asr.autoGainMode,
+                overlapDetectionEnabled: providerConfig.asr.overlapDetectionEnabled
+              }
             },
             this.buildAsrCallbacks(sessionId)
           )
@@ -540,7 +609,8 @@ export class MeetingService {
       ...this.recording,
       activeSessionId: sessionId,
       deviceId,
-      deviceName
+      deviceName,
+      latencyMode: providerConfig.asr.latencyMode
     };
   }
 
@@ -569,6 +639,12 @@ export class MeetingService {
       unclearSegments: 0,
       failedSegments: 0,
       consecutiveAsrFailures: 0,
+      consecutiveLowQualitySegments: 0,
+      latencyMode: this.db.getProviderConfig().asr.latencyMode,
+      currentLatencyMs: null,
+      lastOverlapAt: null,
+      inputQuality: "low",
+      lastAudioIssues: [],
       errorMessage: null
     };
   }
@@ -596,7 +672,8 @@ export class MeetingService {
       ...this.recording,
       inputLevel,
       lastAudioAt,
-      audioState
+      audioState,
+      inputQuality: inputLevel >= 0.03 ? "high" : inputLevel >= 0.012 ? "medium" : "low"
     };
     this.emit("recording-state", this.recording);
   }
@@ -612,5 +689,31 @@ export class MeetingService {
 
   private emit<K extends keyof AppEventMap>(event: K, payload: AppEventMap[K]): void {
     this.activeWindow?.webContents.send(`app:event:${String(event)}`, payload);
+  }
+
+  private maybeCreateHighlights(sessionId: string, segment: TranscriptSegment): void {
+    if (segment.quality !== "high" || segment.overlapDetected || segment.audioIssues.length > 0) {
+      return;
+    }
+
+    const existingTexts = this.db
+      .listHighlights(sessionId)
+      .slice(-6)
+      .map((item) => item.text);
+    const candidates = extractHighlightCandidates(segment.text, existingTexts);
+
+    for (const candidate of candidates) {
+      const highlight: MeetingHighlight = this.db.appendHighlight({
+        sessionId,
+        segmentId: segment.id,
+        seq: segment.seq,
+        kind: candidate.kind,
+        text: candidate.text
+      });
+      this.emit("highlight-added", {
+        sessionId,
+        highlight
+      });
+    }
   }
 }

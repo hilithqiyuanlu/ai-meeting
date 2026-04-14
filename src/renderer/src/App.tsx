@@ -66,6 +66,63 @@ function audioLevelPercent(level: number): number {
   return Math.max(2, Math.min(100, Math.round(level * 900)));
 }
 
+function latencyModeLabel(mode: ProviderConfig["asr"]["latencyMode"]): string {
+  switch (mode) {
+    case "fast":
+      return "快速";
+    case "accurate":
+      return "高精度";
+    default:
+      return "平衡";
+  }
+}
+
+function transcriptQualityLabel(quality: RecordingSnapshot["inputQuality"]): string {
+  switch (quality) {
+    case "high":
+      return "高";
+    case "medium":
+      return "中";
+    default:
+      return "低";
+  }
+}
+
+function audioIssueLabel(issue: MeetingDetail["transcriptSegments"][number]["audioIssues"][number]): string {
+  switch (issue) {
+    case "echo":
+      return "回声";
+    case "noise":
+      return "噪声";
+    case "low-level":
+      return "音量低";
+    case "clipping":
+      return "过载";
+    default:
+      return issue;
+  }
+}
+
+function highlightKindLabel(kind: MeetingDetail["highlights"][number]["kind"]): string {
+  switch (kind) {
+    case "decision":
+      return "决策";
+    case "action":
+      return "待办";
+    case "risk":
+      return "风险";
+    default:
+      return "待确认";
+  }
+}
+
+function formatLatency(latencyMs: number | null): string {
+  if (latencyMs === null) {
+    return "暂无";
+  }
+  return `${latencyMs} ms`;
+}
+
 function summarySourceSegment(detail: MeetingDetail | null): number {
   return detail?.summary?.sourceSegmentSeq ?? 0;
 }
@@ -148,16 +205,25 @@ function meetingStatusTone(status: MeetingSession["status"]): string {
   }
 }
 
+function isLegacyAutoMeetingTitle(title: string): boolean {
+  return title.startsWith("会议记录 ");
+}
+
+function buildDefaultMeetingTitle(startedAt: Date, captureMode: AppPreferences["captureMode"]): string {
+  const base = formatCompactDateTime(startedAt.toISOString());
+  return captureMode === "microphone" ? base : `系统音频 ${base}`;
+}
+
+function meetingListTitle(session: MeetingSession): string {
+  return isLegacyAutoMeetingTitle(session.title) ? formatCompactDateTime(session.startedAt) : session.title.trim() || formatCompactDateTime(session.startedAt);
+}
+
 function meetingDisplayTitle(session: MeetingSession | null): string {
   if (!session) {
     return "实时记录";
   }
 
-  if (session.title.startsWith("会议记录 ")) {
-    return formatCompactDateTime(session.startedAt);
-  }
-
-  return session.title;
+  return meetingListTitle(session);
 }
 
 function getPreferredDevice(
@@ -193,6 +259,9 @@ export function App() {
   const [asking, setAsking] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<MeetingSession | null>(null);
   const [deletingSessionId, setDeletingSessionId] = useState<string | null>(null);
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
+  const [editingSessionTitle, setEditingSessionTitle] = useState("");
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
 
   const [providerDraft, setProviderDraft] = useState<ProviderConfig | null>(null);
   const [preferenceDraft, setPreferenceDraft] = useState<AppPreferences | null>(null);
@@ -253,6 +322,11 @@ export function App() {
         void loadDetail(payload.sessionId);
       }
     });
+    const offHighlight = window.appApi.onEvent("highlight-added", (payload) => {
+      if (payload.sessionId === selectedSessionId) {
+        void loadDetail(payload.sessionId);
+      }
+    });
     const offLocalModel = window.appApi.onEvent("local-model-updated", (payload: LocalAsrStatus) => {
       setBootstrap((current) =>
         current
@@ -277,6 +351,7 @@ export function App() {
       offRecording();
       offSession();
       offSummary();
+      offHighlight();
       offLocalModel();
       offError();
     };
@@ -301,13 +376,8 @@ export function App() {
     if (!bootstrap) {
       return "";
     }
-    return (
-      preferenceDraft?.preferredAudioDeviceId ||
-      bootstrap.environment.audioDevices.find((device) => device.isBlackHole)?.id ||
-      bootstrap.environment.audioDevices[0]?.id ||
-      ""
-    );
-  }, [bootstrap, preferenceDraft?.preferredAudioDeviceId]);
+    return getPreferredDevice(bootstrap.environment, preferenceDraft ?? bootstrap.preferences, (preferenceDraft ?? bootstrap.preferences).captureMode)?.id ?? "";
+  }, [bootstrap, preferenceDraft]);
 
   if (loading) {
     return <div className="screen-center">正在加载工作台...</div>;
@@ -356,7 +426,7 @@ export function App() {
         return;
       }
 
-      const title = `会议记录 ${new Date().toLocaleString("zh-CN")}`;
+      const title = buildDefaultMeetingTitle(new Date(), prefsDraft.captureMode);
       await window.appApi.startMeeting({
         title,
         audioDeviceId: device.id,
@@ -559,23 +629,67 @@ export function App() {
     }
   }
 
+  function beginRenameSession(session: MeetingSession): void {
+    setEditingSessionId(session.id);
+    setEditingSessionTitle(meetingListTitle(session));
+    setNotice("");
+  }
+
+  async function commitRenameSession(session: MeetingSession): Promise<void> {
+    if (renamingSessionId === session.id) {
+      return;
+    }
+
+    const fallbackTitle = buildDefaultMeetingTitle(new Date(session.startedAt), session.captureMode);
+    const nextTitle = editingSessionTitle.trim() || fallbackTitle;
+    setRenamingSessionId(session.id);
+    try {
+      const next = await window.appApi.renameMeeting(session.id, nextTitle);
+      if (selectedSessionId === session.id) {
+        setDetail(next);
+      }
+      setEditingSessionId(null);
+      setEditingSessionTitle("");
+      setNotice("会议名称已更新");
+    } catch (error) {
+      setNotice(`重命名失败：${toMessage(error)}`);
+    } finally {
+      setRenamingSessionId(null);
+    }
+  }
+
+  function cancelRenameSession(): void {
+    setEditingSessionId(null);
+    setEditingSessionTitle("");
+    setRenamingSessionId(null);
+  }
+
   return (
     <>
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-panel">
             <div className="sidebar-intro">
-              <p className="eyebrow">Meeting Archive</p>
+              <p className="eyebrow">Realtime Copilot</p>
               <h1>AI Meeting</h1>
             </div>
 
             <HistoryPanel
               sessions={state.sessions}
               selectedSessionId={selectedSessionId}
+              editingSessionId={editingSessionId}
+              editingSessionTitle={editingSessionTitle}
+              renamingSessionId={renamingSessionId}
+              canStart={state.recording.status === "idle" || state.recording.status === "error"}
               onSelect={(sessionId) => {
                 setSelectedSessionId(sessionId);
                 setActiveTab("capture");
               }}
+              onStart={startMeeting}
+              onBeginRename={beginRenameSession}
+              onEditingTitleChange={setEditingSessionTitle}
+              onCommitRename={(session) => void commitRenameSession(session)}
+              onCancelRename={cancelRenameSession}
               onDelete={(session) => setDeleteTarget(session)}
             />
 
@@ -595,9 +709,9 @@ export function App() {
         <main className="workspace">
           <header className="workspace-header">
             <div className="workspace-heading">
-              <p className="eyebrow">{activeTab === "settings" ? "System Preferences" : "Workspace"}</p>
+              <p className="eyebrow">{activeTab === "settings" ? "System Preferences" : "Realtime Copilot"}</p>
               <h2>{activeTab === "settings" ? "设置中心" : meetingDisplayTitle(currentSession)}</h2>
-              {activeTab === "settings" ? <p className="workspace-subtitle">统一维护采集、转写与纪要生成配置。</p> : null}
+              {activeTab === "settings" ? <p className="workspace-subtitle">统一维护麦克风采集、本地识别链路与导出配置。</p> : null}
             </div>
             {notice ? <div className="notice">{notice}</div> : null}
           </header>
@@ -612,6 +726,7 @@ export function App() {
                     currentSession={currentSession}
                     selectedDeviceId={selectedDeviceId}
                   />
+                  <HighlightsPanel detail={detail} compact />
                   <TranscriptPanel detail={detail} />
                 </>
               ) : (
@@ -641,7 +756,6 @@ export function App() {
                 currentSession={currentSession}
                 detail={detail}
                 recording={state.recording}
-                onStart={startMeeting}
                 onPause={async () => {
                   try {
                     await window.appApi.pauseMeeting();
@@ -695,64 +809,48 @@ function CapturePanel(props: {
   selectedDeviceId: string;
 }) {
   const [statusExpanded, setStatusExpanded] = useState(false);
-  const selectedDevice = props.environment.audioDevices.find((item) => item.id === props.selectedDeviceId);
   const summaryItems = [
     {
-      label: "录制",
-      value: recordingStatusLabel(props.recording)
+      label: "延迟",
+      value: formatLatency(props.recording.currentLatencyMs)
     },
     {
-      label: "输入",
-      value: audioStateLabel(props.recording.audioState)
-    },
-    {
-      label: "片段",
-      value: `${props.recording.successfulSegments}/${props.recording.failedSegments}`
+      label: "质量",
+      value: transcriptQualityLabel(props.recording.inputQuality)
     }
   ];
 
   return (
-    <div className="stack">
-      <section className="capture-banner">
-        <div className="capture-banner-main">
-          <p className="eyebrow">Realtime Capture</p>
-          <h3>{selectedDevice?.name ?? "未选择采集设备"}</h3>
-          <p className="muted">
-            {props.currentSession ? `当前会议状态：${meetingStatusLabel(props.currentSession.status)}` : "准备创建一场新的会议记录。"}
-          </p>
+    <section className={statusExpanded ? "accordion-card open capture-status-card" : "accordion-card capture-status-card"}>
+      <button
+        className="accordion-trigger compact"
+        type="button"
+        aria-expanded={statusExpanded}
+        onClick={() => setStatusExpanded((current) => !current)}
+      >
+        <div className="accordion-trigger-main">
+          <p className="eyebrow">System Status</p>
+          <h4>运行状态</h4>
         </div>
-        <span className={`session-status-pill tone-${meetingStatusTone(props.currentSession?.status ?? "idle")}`}>
-          {props.currentSession ? meetingStatusLabel(props.currentSession.status) : "待命"}
-        </span>
-      </section>
-
-      <section className={statusExpanded ? "accordion-card open" : "accordion-card"}>
-        <button
-          className="accordion-trigger"
-          type="button"
-          aria-expanded={statusExpanded}
-          onClick={() => setStatusExpanded((current) => !current)}
-        >
-          <div className="accordion-trigger-main">
-            <p className="eyebrow">System Status</p>
-            <h4>运行状态</h4>
+        <div className="accordion-trigger-side compact">
+          <span className={`session-status-pill compact tone-${meetingStatusTone(props.currentSession?.status ?? "idle")}`}>
+            {props.currentSession ? meetingStatusLabel(props.currentSession.status) : "待命"}
+          </span>
+          <div className="accordion-summary">
+            {summaryItems.map((item) => (
+              <span key={item.label} className="summary-chip compact">
+                <span className="summary-chip-label">{item.label}</span>
+                <span className="summary-chip-value">{item.value}</span>
+              </span>
+            ))}
           </div>
-          <div className="accordion-trigger-side">
-            <div className="accordion-summary">
-              {summaryItems.map((item) => (
-                <span key={item.label} className="summary-chip">
-                  <span className="summary-chip-label">{item.label}</span>
-                  <span className="summary-chip-value">{item.value}</span>
-                </span>
-              ))}
-            </div>
-            <span className="accordion-icon">{statusExpanded ? "−" : "+"}</span>
-          </div>
-        </button>
+          <span className="accordion-icon">{statusExpanded ? "−" : "+"}</span>
+        </div>
+      </button>
 
-        {statusExpanded ? (
-          <div className="accordion-content">
-            <div className="metrics-grid">
+      {statusExpanded ? (
+        <div className="accordion-content">
+          <div className="metrics-grid">
               <article className="metric-card">
                 <span>状态</span>
                 <strong>{recordingStatusLabel(props.recording)}</strong>
@@ -762,8 +860,12 @@ function CapturePanel(props: {
                 <strong>{audioStateLabel(props.recording.audioState)}</strong>
               </article>
               <article className="metric-card">
-                <span>输入电平</span>
-                <strong>{Math.round(props.recording.inputLevel * 1000) / 1000}</strong>
+                <span>实时延迟</span>
+                <strong>{formatLatency(props.recording.currentLatencyMs)}</strong>
+              </article>
+              <article className="metric-card">
+                <span>输入质量</span>
+                <strong>{transcriptQualityLabel(props.recording.inputQuality)}</strong>
               </article>
               <article className="metric-card">
                 <span>最近有声</span>
@@ -774,42 +876,64 @@ function CapturePanel(props: {
                 <strong>{formatRelativeStatus(props.recording.lastTranscriptAt)}</strong>
               </article>
               <article className="metric-card">
-                <span>片段统计</span>
-                <strong>
-                  成功 {props.recording.successfulSegments} / 静音 {props.recording.silentSegments} / 失败 {props.recording.failedSegments}
-                </strong>
+                <span>风险片段</span>
+                <strong>低质 {props.recording.consecutiveLowQualitySegments} / 失败 {props.recording.failedSegments}</strong>
               </article>
             </div>
 
-            <div className="level-card level-card-inline">
-              <div className="section-head">
-                <div>
-                  <h4>实时电平</h4>
-                  <p className="muted">{audioStateLabel(props.recording.audioState)}</p>
-                </div>
-                <span className="mono-text">{selectedDevice?.name ?? "未选择设备"}</span>
+          <div className="level-card level-card-inline">
+            <div className="section-head">
+              <div>
+                <h4>实时电平</h4>
+                <p className="muted">
+                  {latencyModeLabel(props.recording.latencyMode)}延迟策略 · {audioStateLabel(props.recording.audioState)}
+                </p>
               </div>
-              <div className="level-track">
-                <div className="level-fill" style={{ width: `${audioLevelPercent(props.recording.inputLevel)}%` }}></div>
-              </div>
-              <p className="level-readout mono-text">input level {Math.round(props.recording.inputLevel * 1000) / 1000}</p>
-              <p>{props.recording.partialText || "等待音频输入..."}</p>
-              {props.recording.errorMessage ? <p className="error-text">最近错误：{props.recording.errorMessage}</p> : null}
-              {props.recording.consecutiveAsrFailures > 0 ? (
-                <p className="warning-text">连续失败段数：{props.recording.consecutiveAsrFailures}</p>
-              ) : null}
             </div>
+            <div className="level-track">
+              <div className="level-fill" style={{ width: `${audioLevelPercent(props.recording.inputLevel)}%` }}></div>
+            </div>
+            <p className="level-readout mono-text">input level {Math.round(props.recording.inputLevel * 1000) / 1000}</p>
+            <p>{props.recording.partialText || "等待稳定语音输入..."}</p>
+            {props.recording.lastAudioIssues.length > 0 ? (
+              <div className="tag-row">
+                {props.recording.lastAudioIssues.map((issue) => (
+                  <span key={issue} className="status-tag warning">
+                    {audioIssueLabel(issue)}
+                  </span>
+                ))}
+              </div>
+            ) : null}
+            {props.recording.lastOverlapAt ? (
+              <p className="warning-text">最近检测到重叠发言：{formatRelativeStatus(props.recording.lastOverlapAt)}</p>
+            ) : null}
+            {props.recording.errorMessage ? <p className="error-text">最近错误：{props.recording.errorMessage}</p> : null}
+            {props.recording.consecutiveAsrFailures > 0 ? (
+              <p className="warning-text">连续失败段数：{props.recording.consecutiveAsrFailures}</p>
+            ) : null}
+            {props.recording.consecutiveLowQualitySegments > 0 ? (
+              <p className="warning-text">连续低质量片段：{props.recording.consecutiveLowQualitySegments}</p>
+            ) : null}
           </div>
-        ) : null}
-      </section>
-    </div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
 function HistoryPanel(props: {
   sessions: MeetingSession[];
   selectedSessionId: string | null;
+  editingSessionId: string | null;
+  editingSessionTitle: string;
+  renamingSessionId: string | null;
+  canStart: boolean;
   onSelect: (sessionId: string) => void;
+  onStart: () => Promise<void>;
+  onBeginRename: (session: MeetingSession) => void;
+  onEditingTitleChange: (title: string) => void;
+  onCommitRename: (session: MeetingSession) => void;
+  onCancelRename: () => void;
   onDelete?: (session: MeetingSession) => void;
 }) {
   return (
@@ -819,7 +943,15 @@ function HistoryPanel(props: {
           <p className="eyebrow">History</p>
           <h3>历史会议</h3>
         </div>
-        <span className="history-count mono-text">{props.sessions.length}</span>
+        <button
+          className="history-add-button"
+          type="button"
+          aria-label="开始新会议"
+          disabled={!props.canStart}
+          onClick={() => void props.onStart()}
+        >
+          +
+        </button>
       </div>
 
       <div className="history-list-shell">
@@ -832,17 +964,49 @@ function HistoryPanel(props: {
           <div className="history-list">
             {props.sessions.map((session) => {
               const tone = meetingStatusTone(session.status);
+              const editing = props.editingSessionId === session.id;
               return (
                 <div key={session.id} className={props.selectedSessionId === session.id ? "history-row selected" : "history-row"}>
-                  <button className="history-main" type="button" onClick={() => props.onSelect(session.id)}>
-                    <span className="history-title mono-text">{formatCompactDateTime(session.startedAt)}</span>
-                    <span className="history-subline">
-                      <span className={`history-status-badge tone-${tone}`}>
-                        <span className="history-status-icon">{meetingStatusIcon(session.status)}</span>
-                        <span>{meetingStatusLabel(session.status)}</span>
+                  {editing ? (
+                    <div className="history-edit-shell">
+                      <input
+                        autoFocus
+                        className="history-title-input"
+                        disabled={props.renamingSessionId === session.id}
+                        value={props.editingSessionTitle}
+                        onChange={(event) => props.onEditingTitleChange(event.target.value)}
+                        onBlur={() => props.onCommitRename(session)}
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            props.onCommitRename(session);
+                          } else if (event.key === "Escape") {
+                            event.preventDefault();
+                            props.onCancelRename();
+                          }
+                        }}
+                      />
+                      <span className="history-edit-hint muted">
+                        {props.renamingSessionId === session.id ? "保存中..." : "回车保存，Esc 取消"}
                       </span>
-                    </span>
-                  </button>
+                    </div>
+                  ) : (
+                    <button
+                      className="history-main"
+                      type="button"
+                      onClick={() => props.onSelect(session.id)}
+                      onDoubleClick={() => props.onBeginRename(session)}
+                    >
+                      <span className="history-title mono-text">{meetingListTitle(session)}</span>
+                      <span className="history-subline">
+                        <span className={`history-status-badge tone-${tone}`}>
+                          <span className="history-status-icon">{meetingStatusIcon(session.status)}</span>
+                          <span>{meetingStatusLabel(session.status)}</span>
+                        </span>
+                        <span className="history-time muted mono-text">{formatCompactDateTime(session.startedAt)}</span>
+                      </span>
+                    </button>
+                  )}
                   {props.onDelete ? (
                     <button className="history-delete" type="button" aria-label="删除会议记录" onClick={() => props.onDelete?.(session)}>
                       ×
@@ -882,7 +1046,7 @@ function SettingsPanel(props: {
       <section className="settings-hero">
         <p className="eyebrow">System Preferences</p>
         <h3>全局设置</h3>
-        <p className="muted">统一管理采集模式、模型配置、本地导出和首次引导偏好。</p>
+        <p className="muted">统一管理采集、转写、纪要和导出。</p>
       </section>
 
       <div className="settings-grid">
@@ -917,11 +1081,6 @@ function SettingsPanel(props: {
               系统音频模式
             </button>
           </div>
-          <p className="muted">
-            {preferenceDraft.captureMode === "microphone"
-              ? "适合线下会议；线上会议建议佩戴耳机。"
-              : "适合线上会议；需要先配置 BlackHole。"}
-          </p>
         </div>
 
         <div className="settings-card">
@@ -1010,7 +1169,26 @@ function SettingsPanel(props: {
                 </select>
               </label>
               <label className="form-field">
-                <span>分段时长 (ms)</span>
+                <span>延迟策略</span>
+                <select
+                  value={providerDraft.asr.latencyMode}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        latencyMode: event.target.value as ProviderConfig["asr"]["latencyMode"]
+                      }
+                    })
+                  }
+                >
+                  <option value="fast">快速</option>
+                  <option value="balanced">平衡</option>
+                  <option value="accurate">高精度</option>
+                </select>
+              </label>
+              <label className="form-field">
+                <span>兜底分段时长 (ms)</span>
                 <input
                   type="number"
                   min={4000}
@@ -1027,8 +1205,156 @@ function SettingsPanel(props: {
                   }
                 />
               </label>
+              <div className="guide-grid">
+                <div className="guide-card">
+                  <span className="guide-label">VAD</span>
+                  <strong>{providerDraft.asr.vadEnabled ? "已启用" : "已关闭"}</strong>
+                </div>
+                <div className="guide-card">
+                  <span className="guide-label">重叠检测</span>
+                  <strong>{providerDraft.asr.overlapDetectionEnabled ? "已启用" : "已关闭"}</strong>
+                </div>
+              </div>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={providerDraft.asr.vadEnabled}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        vadEnabled: event.target.checked
+                      }
+                    })
+                  }
+                />
+                <span>启用 VAD 驱动分段</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={providerDraft.asr.overlapDetectionEnabled}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        overlapDetectionEnabled: event.target.checked
+                      }
+                    })
+                  }
+                />
+                <span>启用重叠发言检测</span>
+              </label>
+              <label className="form-field">
+                <span>VAD 阈值</span>
+                <input
+                  type="number"
+                  min={0.005}
+                  max={0.08}
+                  step={0.001}
+                  value={providerDraft.asr.vadThreshold}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        vadThreshold: Number(event.target.value) || 0.014
+                      }
+                    })
+                  }
+                />
+              </label>
+              <label className="form-field">
+                <span>尾部缓冲 (ms)</span>
+                <input
+                  type="number"
+                  min={120}
+                  step={60}
+                  value={providerDraft.asr.vadPostRollMs}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        vadPostRollMs: Number(event.target.value) || 420
+                      }
+                    })
+                  }
+                />
+              </label>
+              <div className="guide-grid">
+                <div className="guide-card">
+                  <span className="guide-label">AEC</span>
+                  <strong className="mono-text">{providerDraft.asr.aecMode}</strong>
+                </div>
+                <div className="guide-card">
+                  <span className="guide-label">NS / AGC</span>
+                  <strong className="mono-text">
+                    {providerDraft.asr.noiseSuppressionMode} / {providerDraft.asr.autoGainMode}
+                  </strong>
+                </div>
+              </div>
+              <label className="form-field">
+                <span>AEC 策略</span>
+                <select
+                  value={providerDraft.asr.aecMode}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        aecMode: event.target.value as ProviderConfig["asr"]["aecMode"]
+                      }
+                    })
+                  }
+                >
+                  <option value="auto">自动</option>
+                  <option value="on">强制开启</option>
+                  <option value="off">关闭</option>
+                </select>
+              </label>
+              <label className="form-field">
+                <span>噪声抑制</span>
+                <select
+                  value={providerDraft.asr.noiseSuppressionMode}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        noiseSuppressionMode: event.target.value as ProviderConfig["asr"]["noiseSuppressionMode"]
+                      }
+                    })
+                  }
+                >
+                  <option value="auto">自动</option>
+                  <option value="on">开启</option>
+                  <option value="off">关闭</option>
+                </select>
+              </label>
+              <label className="form-field">
+                <span>自动增益</span>
+                <select
+                  value={providerDraft.asr.autoGainMode}
+                  onChange={(event) =>
+                    props.onProviderChange({
+                      ...providerDraft,
+                      asr: {
+                        ...providerDraft.asr,
+                        autoGainMode: event.target.value as ProviderConfig["asr"]["autoGainMode"]
+                      }
+                    })
+                  }
+                >
+                  <option value="auto">自动</option>
+                  <option value="on">开启</option>
+                  <option value="off">关闭</option>
+                </select>
+              </label>
+              <p className="muted">说明：当前版本已实现本地噪声抑制、自动增益、VAD 与重叠检测；AEC 策略已预留接口，现阶段仍以告警和保守降级为主。</p>
               <p className="muted">模型路径：{environment.localModelStoragePath ?? "尚未下载"}</p>
-              <p className="muted">隐私说明：转写在本机完成，会议纪要仍调用你配置的 LLM。</p>
               {environment.localModelErrorMessage ? <p className="error-text">模型错误：{environment.localModelErrorMessage}</p> : null}
               <div className="control-grid">
                 <button
@@ -1199,7 +1525,7 @@ function SettingsPanel(props: {
               }
             />
           </label>
-          <p className="muted">{localLlmSelected ? "纪要与问答将经由本机 Ollama 完成，实现全链路本地化。" : "默认推荐：gemini-2.5-flash"}</p>
+          <p className="muted">{localLlmSelected ? "纪要与问答走本机 Ollama。" : "默认推荐：gemini-2.5-flash"}</p>
         </div>
 
         <div className="settings-card settings-card-wide">
@@ -1249,11 +1575,6 @@ function SettingsPanel(props: {
               </div>
             </div>
 
-            <p className="muted">
-              麦克风模式适合线下会议；系统音频模式适合线上会议，需要提前完成 BlackHole 配置。若同时选择本地 SenseVoice 和
-              Ollama，本应用即可实现转写、纪要、问答全链路本地化。
-            </p>
-
             <div className="control-grid">
               <button type="button" onClick={props.onRequestAccess}>
                 请求麦克风权限
@@ -1296,23 +1617,80 @@ function TranscriptPanel(props: {
       <div className="section-head">
         <div>
           <p className="eyebrow">Transcript</p>
-          <h4>全文转写</h4>
+          <h4>实时字幕流</h4>
         </div>
         <span className="mono-text">{props.detail.transcriptSegments.length} 段</span>
       </div>
       <div className="transcript-list">
         {props.detail.transcriptSegments.map((segment) => (
-          <article key={segment.id} className={`transcript-item ${segment.kind}`}>
+          <article
+            key={segment.id}
+            className={`transcript-item ${segment.kind} ${segment.quality === "low" ? "low-quality" : ""} ${
+              segment.overlapDetected ? "overlap" : ""
+            }`}
+          >
             <span className="transcript-time mono-text">{segment.startMs}ms</span>
             <div>
-              <p>{segment.kind === "speech" ? segment.text : segment.note || "此段没有可用正文。"}</p>
+              <div className="transcript-meta-row">
+                <p>{segment.kind === "speech" ? segment.text : segment.note || "此段没有可用正文。"}</p>
+                <div className="tag-row">
+                  <span className={`status-tag quality-${segment.quality}`}>{transcriptQualityLabel(segment.quality)}</span>
+                  {segment.overlapDetected ? <span className="status-tag warning">重叠</span> : null}
+                  {segment.audioIssues.map((issue) => (
+                    <span key={issue} className="status-tag muted">
+                      {audioIssueLabel(issue)}
+                    </span>
+                  ))}
+                </div>
+              </div>
               <small>
-                类型：{segment.kind} | 电平：{Math.round(segment.inputLevel * 1000) / 1000} | 重叠：{segment.overlapChars}
+                类型：{segment.kind} | 电平：{Math.round(segment.inputLevel * 1000) / 1000} | 延迟：{segment.latencyMs} ms |
+                处理：{segment.processingMs} ms | 去重：{segment.overlapChars}
               </small>
+              {segment.note && segment.kind === "speech" ? <small>{segment.note}</small> : null}
             </div>
           </article>
         ))}
       </div>
+    </div>
+  );
+}
+
+function HighlightsPanel(props: {
+  detail: MeetingDetail | null;
+  compact?: boolean;
+}) {
+  if (!props.detail) {
+    return (
+      <div className={`detail-card highlight-card ${props.compact ? "compact" : ""} empty-state`}>
+        <p className="eyebrow">Highlights</p>
+        <h3>重点提醒</h3>
+        <p>会中高置信度的决策、待办和风险会出现在这里。</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`detail-card highlight-card ${props.compact ? "compact" : ""}`}>
+      <div className="section-head">
+        <div>
+          <p className="eyebrow">Highlights</p>
+          <h4>重点提醒</h4>
+        </div>
+        <span className="mono-text">{props.detail.highlights.length} 条</span>
+      </div>
+      {props.detail.highlights.length === 0 ? (
+        <p className="muted">当前还没有满足保守阈值的提醒。系统只会在高置信度、非重叠片段上提示重点。</p>
+      ) : (
+        <div className="highlight-list">
+          {(props.compact ? props.detail.highlights.slice(0, 2) : props.detail.highlights).map((item) => (
+            <article key={item.id} className={`highlight-item kind-${item.kind}`}>
+              <span className="status-tag accent">{highlightKindLabel(item.kind)}</span>
+              <p>{item.text}</p>
+            </article>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
@@ -1426,13 +1804,11 @@ function ControlRail(props: {
   currentSession: MeetingSession | null;
   detail: MeetingDetail | null;
   recording: RecordingSnapshot;
-  onStart: () => Promise<void>;
   onPause: () => Promise<void>;
   onResume: () => Promise<void>;
   onStop: () => Promise<void>;
   onExport: (format: "markdown" | "txt") => Promise<void>;
 }) {
-  const canStart = props.recording.status === "idle" || props.recording.status === "error";
   const canPause = props.recording.status === "recording";
   const canResume =
     props.recording.status === "paused" ||
@@ -1456,17 +1832,15 @@ function ControlRail(props: {
         </div>
 
         <div className="control-grid">
-          <button className="primary-button" disabled={!canStart} type="button" onClick={props.onStart}>
-            开始新会议
-          </button>
           <button className="danger-ghost" disabled={!canFinish} type="button" onClick={props.onStop}>
             结束会议
           </button>
-          <button disabled={!canResume} type="button" onClick={props.onResume}>
-            继续
-          </button>
-          <button disabled={!canPause} type="button" onClick={props.onPause}>
-            暂停
+          <button
+            disabled={!canResume && !canPause}
+            type="button"
+            onClick={canPause ? props.onPause : props.onResume}
+          >
+            {canPause ? "暂停" : "继续"}
           </button>
           <button disabled={!props.detail} type="button" onClick={() => props.onExport("markdown")}>
             导出 MD

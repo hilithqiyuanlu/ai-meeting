@@ -1,4 +1,5 @@
 import type { ProviderConfig } from "@shared/types";
+import { classifyTranscriptQuality } from "@main/utils/audio-pipeline";
 import type { AsrProvider, AsrProviderCallbacks } from "./base";
 
 function pcm16MonoToWav(input: Buffer, sampleRate: number): Buffer {
@@ -85,21 +86,38 @@ export class OpenAICompatibleAsrProvider implements AsrProvider {
       const inputLevel = measureLevel(chunk);
       const startMs = index * this.config.chunkMs;
       const endMs = startMs + Math.round((chunk.length / 2 / this.sampleRate) * 1000);
+      const decodeStartedAt = Date.now();
       try {
         const text = await this.transcribeChunk(chunk);
         const trimmed = text.trim();
+        const kind = trimmed ? "speech" : inputLevel >= 0.012 ? "unclear" : "silence";
+        const processingMs = Date.now() - decodeStartedAt;
+        const latencyMs = processingMs + this.config.chunkMs;
         await this.callbacks.onFinalText({
           text: trimmed,
           startMs,
           endMs,
-          kind: trimmed ? "speech" : inputLevel >= 0.012 ? "unclear" : "silence",
+          kind,
           note: trimmed
             ? null
             : inputLevel >= 0.012
               ? "这一段有音频活动，但没有识别出稳定文字。"
               : "这一段接近静音，没有检测到可识别人声。",
           inputLevel,
-          overlapChars: 0
+          overlapChars: 0,
+          processingMs,
+          latencyMs,
+          quality: classifyTranscriptQuality({
+            text: trimmed,
+            kind,
+            processingMs,
+            latencyMs,
+            inputLevel,
+            overlapDetected: false,
+            audioIssues: []
+          }),
+          overlapDetected: false,
+          audioIssues: []
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -110,7 +128,12 @@ export class OpenAICompatibleAsrProvider implements AsrProvider {
           kind: "error",
           note: message,
           inputLevel,
-          overlapChars: 0
+          overlapChars: 0,
+          processingMs: Date.now() - decodeStartedAt,
+          latencyMs: Date.now() - decodeStartedAt,
+          quality: "low",
+          overlapDetected: false,
+          audioIssues: []
         });
         this.callbacks.onError(new Error(`第 ${index + 1} 段转写失败：${message}`));
       }

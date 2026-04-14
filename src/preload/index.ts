@@ -21,6 +21,7 @@ const api: AppApi = {
   resumeMeeting: (sessionId?: string) => ipcRenderer.invoke("meeting:resume", sessionId),
   stopMeeting: () => ipcRenderer.invoke("meeting:stop"),
   getMeetingDetail: (sessionId: string) => ipcRenderer.invoke("meeting:get-detail", sessionId),
+  renameMeeting: (sessionId: string, title: string) => ipcRenderer.invoke("meeting:rename", { sessionId, title }),
   generateSummary: (sessionId: string) => ipcRenderer.invoke("meeting:generate-summary", sessionId),
   askMeetingQuestion: (sessionId: string, question: string) => ipcRenderer.invoke("meeting:ask-question", { sessionId, question }),
   deleteMeeting: (sessionId: string) => ipcRenderer.invoke("meeting:delete", sessionId),

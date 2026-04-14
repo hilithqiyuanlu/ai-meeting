@@ -25,6 +25,7 @@ export interface AppApi {
   resumeMeeting(sessionId?: string): Promise<RecordingSnapshot>;
   stopMeeting(): Promise<RecordingSnapshot>;
   getMeetingDetail(sessionId: string): Promise<MeetingDetail>;
+  renameMeeting(sessionId: string, title: string): Promise<MeetingDetail>;
   generateSummary(sessionId: string): Promise<MeetingDetail>;
   askMeetingQuestion(sessionId: string, question: string): Promise<MeetingDetail>;
   deleteMeeting(sessionId: string): Promise<void>;

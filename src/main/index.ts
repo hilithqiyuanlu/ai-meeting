@@ -110,6 +110,9 @@ async function bootstrap(): Promise<void> {
   ipcMain.handle("meeting:resume", (_, sessionId: string | undefined) => meetingService.resumeMeeting(sessionId));
   ipcMain.handle("meeting:stop", () => meetingService.stopMeeting());
   ipcMain.handle("meeting:get-detail", (_, sessionId: string) => meetingService.getMeetingDetail(sessionId));
+  ipcMain.handle("meeting:rename", (_, payload: { sessionId: string; title: string }) =>
+    meetingService.renameMeeting(payload.sessionId, payload.title)
+  );
   ipcMain.handle("meeting:generate-summary", (_, sessionId: string) => meetingService.generateSummary(sessionId));
   ipcMain.handle("meeting:ask-question", (_, payload: { sessionId: string; question: string }) =>
     meetingService.askMeetingQuestion(payload.sessionId, payload.question)

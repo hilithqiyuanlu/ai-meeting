@@ -1,4 +1,5 @@
 import type { ProviderConfig } from "@shared/types";
+import { classifyTranscriptQuality } from "@main/utils/audio-pipeline";
 import type { AsrProvider, AsrProviderCallbacks } from "./base";
 
 function pcm16MonoToWav(input: Buffer, sampleRate: number): Buffer {
@@ -118,9 +119,12 @@ export class GeminiOpenAIAudioAsrProvider implements AsrProvider {
 
     this.callbacks.onPartialText(`正在用 Gemini 识别第 ${index + 1} 段音频...`);
     this.processing = this.processing.then(async () => {
+      const decodeStartedAt = Date.now();
       try {
         const text = (await this.transcribeChunk(chunk)).trim();
         const kind = text ? "speech" : inputLevel >= 0.012 ? "unclear" : "silence";
+        const processingMs = Date.now() - decodeStartedAt;
+        const latencyMs = processingMs + Math.round((endMs - startMs) / 2);
         const note =
           kind === "silence"
             ? "这一段接近静音，没有检测到可识别人声。"
@@ -135,7 +139,20 @@ export class GeminiOpenAIAudioAsrProvider implements AsrProvider {
           kind,
           note,
           inputLevel,
-          overlapChars
+          overlapChars,
+          processingMs,
+          latencyMs,
+          quality: classifyTranscriptQuality({
+            text,
+            kind,
+            processingMs,
+            latencyMs,
+            inputLevel,
+            overlapDetected: false,
+            audioIssues: []
+          }),
+          overlapDetected: false,
+          audioIssues: []
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -146,7 +163,12 @@ export class GeminiOpenAIAudioAsrProvider implements AsrProvider {
           kind: "error",
           note: message,
           inputLevel,
-          overlapChars
+          overlapChars,
+          processingMs: Date.now() - decodeStartedAt,
+          latencyMs: Date.now() - decodeStartedAt,
+          quality: "low",
+          overlapDetected: false,
+          audioIssues: []
         });
         this.callbacks.onError(new Error(`第 ${index + 1} 段转写失败：${message}`));
       }

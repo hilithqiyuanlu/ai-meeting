@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
+  MeetingHighlight,
   AppPreferences,
   MeetingDetail,
   MeetingQaItem,
@@ -23,7 +24,18 @@ const defaultProviderConfig: ProviderConfig = {
     chunkMs: 5000,
     localModelId: null,
     localModelDir: null,
-    localLanguage: "auto"
+    localLanguage: "auto",
+    latencyMode: "balanced",
+    vadEnabled: true,
+    vadThreshold: 0.014,
+    vadPreRollMs: 240,
+    vadPostRollMs: 420,
+    minSpeechMs: 600,
+    maxSpeechMs: 5200,
+    aecMode: "auto",
+    noiseSuppressionMode: "auto",
+    autoGainMode: "auto",
+    overlapDetectionEnabled: true
   },
   llm: {
     providerId: "gemini-openai-compatible",
@@ -45,12 +57,19 @@ const defaultPreferences: AppPreferences = {
 };
 
 type SessionRow = Omit<MeetingSession, "durationMs"> & { duration_ms: number };
-type TranscriptRow = Omit<TranscriptSegment, "startMs" | "endMs" | "isFinal" | "inputLevel" | "overlapChars"> & {
+type TranscriptRow = Omit<
+  TranscriptSegment,
+  "startMs" | "endMs" | "isFinal" | "inputLevel" | "overlapChars" | "processingMs" | "latencyMs" | "overlapDetected" | "audioIssues"
+> & {
   start_ms: number;
   end_ms: number;
   is_final: number;
   input_level: number | null;
   overlap_chars: number | null;
+  processing_ms: number | null;
+  latency_ms: number | null;
+  overlap_detected: number | null;
+  audio_issues_json: string | null;
 };
 
 export class AppDatabase {
@@ -95,6 +114,11 @@ export class AppDatabase {
         note TEXT,
         input_level REAL NOT NULL DEFAULT 0,
         overlap_chars INTEGER NOT NULL DEFAULT 0,
+        processing_ms INTEGER NOT NULL DEFAULT 0,
+        latency_ms INTEGER NOT NULL DEFAULT 0,
+        quality TEXT NOT NULL DEFAULT 'medium',
+        overlap_detected INTEGER NOT NULL DEFAULT 0,
+        audio_issues_json TEXT NOT NULL DEFAULT '[]',
         createdAt TEXT NOT NULL,
         FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE
       );
@@ -132,6 +156,17 @@ export class AppDatabase {
         FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE
       );
 
+      CREATE TABLE IF NOT EXISTS meeting_highlights (
+        id TEXT PRIMARY KEY,
+        sessionId TEXT NOT NULL,
+        segmentId TEXT NOT NULL,
+        seq INTEGER NOT NULL,
+        kind TEXT NOT NULL,
+        text TEXT NOT NULL,
+        createdAt TEXT NOT NULL,
+        FOREIGN KEY(sessionId) REFERENCES sessions(id) ON DELETE CASCADE
+      );
+
       CREATE TABLE IF NOT EXISTS app_preferences (
         id INTEGER PRIMARY KEY CHECK (id = 1),
         json TEXT NOT NULL
@@ -142,6 +177,11 @@ export class AppDatabase {
     this.ensureColumn("transcript_segments", "note", "TEXT");
     this.ensureColumn("transcript_segments", "input_level", "REAL NOT NULL DEFAULT 0");
     this.ensureColumn("transcript_segments", "overlap_chars", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("transcript_segments", "processing_ms", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("transcript_segments", "latency_ms", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("transcript_segments", "quality", "TEXT NOT NULL DEFAULT 'medium'");
+    this.ensureColumn("transcript_segments", "overlap_detected", "INTEGER NOT NULL DEFAULT 0");
+    this.ensureColumn("transcript_segments", "audio_issues_json", "TEXT NOT NULL DEFAULT '[]'");
     this.ensureColumn("sessions", "captureMode", "TEXT NOT NULL DEFAULT 'system-audio'");
     this.ensureColumn("summaries", "sourceSegmentSeq", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("summaries", "sourceTranscriptChars", "INTEGER NOT NULL DEFAULT 0");
@@ -240,12 +280,23 @@ export class AppDatabase {
     note: string | null;
     inputLevel: number;
     overlapChars: number;
+    processingMs: number;
+    latencyMs: number;
+    quality: TranscriptSegment["quality"];
+    overlapDetected: boolean;
+    audioIssues: TranscriptSegment["audioIssues"];
   }): TranscriptSegment {
     const createdAt = new Date().toISOString();
     const id = randomUUID();
     this.db.prepare(`
-      INSERT INTO transcript_segments (id, sessionId, seq, text, start_ms, end_ms, is_final, kind, note, input_level, overlap_chars, createdAt)
-      VALUES (@id, @sessionId, @seq, @text, @start_ms, @end_ms, @is_final, @kind, @note, @input_level, @overlap_chars, @createdAt)
+      INSERT INTO transcript_segments (
+        id, sessionId, seq, text, start_ms, end_ms, is_final, kind, note, input_level, overlap_chars,
+        processing_ms, latency_ms, quality, overlap_detected, audio_issues_json, createdAt
+      )
+      VALUES (
+        @id, @sessionId, @seq, @text, @start_ms, @end_ms, @is_final, @kind, @note, @input_level, @overlap_chars,
+        @processing_ms, @latency_ms, @quality, @overlap_detected, @audio_issues_json, @createdAt
+      )
     `).run({
       id,
       sessionId: input.sessionId,
@@ -258,6 +309,11 @@ export class AppDatabase {
       note: input.note,
       input_level: input.inputLevel,
       overlap_chars: input.overlapChars,
+      processing_ms: input.processingMs,
+      latency_ms: input.latencyMs,
+      quality: input.quality,
+      overlap_detected: input.overlapDetected ? 1 : 0,
+      audio_issues_json: JSON.stringify(input.audioIssues),
       createdAt
     });
     return {
@@ -272,6 +328,11 @@ export class AppDatabase {
       note: input.note,
       inputLevel: input.inputLevel,
       overlapChars: input.overlapChars,
+      processingMs: input.processingMs,
+      latencyMs: input.latencyMs,
+      quality: input.quality,
+      overlapDetected: input.overlapDetected,
+      audioIssues: input.audioIssues,
       createdAt
     };
   }
@@ -293,8 +354,64 @@ export class AppDatabase {
       note: row.note ?? null,
       inputLevel: row.input_level ?? 0,
       overlapChars: row.overlap_chars ?? 0,
+      processingMs: row.processing_ms ?? 0,
+      latencyMs: row.latency_ms ?? 0,
+      quality: row.quality,
+      overlapDetected: row.overlap_detected === 1,
+      audioIssues: row.audio_issues_json ? (JSON.parse(row.audio_issues_json) as TranscriptSegment["audioIssues"]) : [],
       createdAt: row.createdAt
     }));
+  }
+
+  listHighlights(sessionId: string): MeetingHighlight[] {
+    const rows = this.db
+      .prepare("SELECT * FROM meeting_highlights WHERE sessionId = ? ORDER BY seq ASC, createdAt ASC")
+      .all(sessionId) as Array<{
+      id: string;
+      sessionId: string;
+      segmentId: string;
+      seq: number;
+      kind: MeetingHighlight["kind"];
+      text: string;
+      createdAt: string;
+    }>;
+
+    return rows.map((row) => ({
+      id: row.id,
+      sessionId: row.sessionId,
+      segmentId: row.segmentId,
+      seq: row.seq,
+      kind: row.kind,
+      text: row.text,
+      createdAt: row.createdAt
+    }));
+  }
+
+  appendHighlight(input: Omit<MeetingHighlight, "id" | "createdAt">): MeetingHighlight {
+    const id = randomUUID();
+    const createdAt = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO meeting_highlights (id, sessionId, segmentId, seq, kind, text, createdAt)
+      VALUES (@id, @sessionId, @segmentId, @seq, @kind, @text, @createdAt)
+    `).run({
+      id,
+      sessionId: input.sessionId,
+      segmentId: input.segmentId,
+      seq: input.seq,
+      kind: input.kind,
+      text: input.text,
+      createdAt
+    });
+
+    return {
+      id,
+      sessionId: input.sessionId,
+      segmentId: input.segmentId,
+      seq: input.seq,
+      kind: input.kind,
+      text: input.text,
+      createdAt
+    };
   }
 
   saveSummary(summary: Omit<MeetingSummary, "createdAt" | "updatedAt">): MeetingSummary {
@@ -378,6 +495,7 @@ export class AppDatabase {
     return {
       session: this.getSession(sessionId),
       transcriptSegments: this.listTranscriptSegments(sessionId),
+      highlights: this.listHighlights(sessionId),
       summary: this.getSummary(sessionId),
       qaItems: this.listQaItems(sessionId)
     };
@@ -513,6 +631,8 @@ export class AppDatabase {
       merged.asr.runtime = "sherpa-onnx";
       merged.asr.localModelId = merged.asr.localModelId ?? "sherpa-onnx-sense-voice-zh-en-ja-ko-yue-int8-2025-09-09";
       merged.asr.chunkMs = merged.asr.chunkMs || 8000;
+      merged.asr.vadEnabled = merged.asr.vadEnabled ?? true;
+      merged.asr.overlapDetectionEnabled = merged.asr.overlapDetectionEnabled ?? true;
     } else {
       merged.asr.runtime = "cloud";
     }
