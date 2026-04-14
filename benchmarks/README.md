@@ -34,7 +34,7 @@ SENSEVOICE_MODEL_DIR=/absolute/model-dir pnpm benchmark:asr -- benchmarks/manife
       "noiseSuppressionMode": "auto",
       "autoGainMode": "auto",
       "overlapDetectionEnabled": true,
-      "audioProcessingBackend": "heuristic-apm"
+      "audioProcessingBackend": "system-voice-processing"
     }
   },
   "items": [
@@ -83,4 +83,5 @@ SENSEVOICE_MODEL_DIR=/absolute/model-dir pnpm benchmark:asr -- benchmarks/manife
 说明：
 
 - `baseline` 当前只是结果标签，便于你手动对照 `v0.4.3`，脚本不会自动加载历史快照或自动 diff。
-- `audioProcessingBackend` 在 `v0.4.4` 只支持 `heuristic-apm` 与 `none`。
+- `audioProcessingBackend` 在 `v0.4.5` 支持 `none / heuristic-apm / system-voice-processing`。
+- `system-voice-processing` 的效果需要通过真实麦克风录制验证；`replay` 模式不会模拟系统级处理收益。

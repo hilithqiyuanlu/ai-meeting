@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { sanitizeRequestedAudioProcessingBackend } from "@main/utils/audio-processing-backend";
 import { sanitizeCustomTerms } from "@shared/term-library";
 import type {
   MeetingHighlight,
@@ -37,7 +38,7 @@ const defaultProviderConfig: ProviderConfig = {
     noiseSuppressionMode: "auto",
     autoGainMode: "auto",
     overlapDetectionEnabled: true,
-    audioProcessingBackend: "heuristic-apm"
+    audioProcessingBackend: "auto"
   },
   llm: {
     providerId: "gemini-openai-compatible",
@@ -670,11 +671,10 @@ export class AppDatabase {
       merged.asr.chunkMs = merged.asr.chunkMs || 8000;
       merged.asr.vadEnabled = merged.asr.vadEnabled ?? true;
       merged.asr.overlapDetectionEnabled = merged.asr.overlapDetectionEnabled ?? true;
-      merged.asr.audioProcessingBackend =
-        merged.asr.audioProcessingBackend === "none" ? "none" : "heuristic-apm";
+      merged.asr.audioProcessingBackend = sanitizeRequestedAudioProcessingBackend(merged.asr.audioProcessingBackend);
     } else {
       merged.asr.runtime = "cloud";
-      merged.asr.audioProcessingBackend = "none";
+      merged.asr.audioProcessingBackend = sanitizeRequestedAudioProcessingBackend(merged.asr.audioProcessingBackend);
     }
 
     return merged;

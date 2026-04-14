@@ -18,6 +18,7 @@ import { EnvironmentService } from "./environment-service";
 import { ExportService } from "./export-service";
 import { SystemAudioHelperClient } from "./audio-helper";
 import { computePcmRms, getAudioState } from "@main/utils/audio";
+import { resolveActiveAudioProcessingBackend } from "@main/utils/audio-processing-backend";
 import { stitchTranscript } from "@main/utils/transcript";
 import { LocalAsrModelService } from "./local-asr-model-service";
 
@@ -42,6 +43,7 @@ export class MeetingService {
     consecutiveAsrFailures: 0,
     consecutiveLowQualitySegments: 0,
     latencyMode: "balanced",
+    requestedAudioProcessingBackend: "auto",
     audioProcessingBackend: "none",
     voiceProcessingActive: false,
     currentLatencyMs: null,
@@ -574,8 +576,9 @@ export class MeetingService {
       consecutiveAsrFailures: 0,
       consecutiveLowQualitySegments: 0,
       latencyMode: this.db.getProviderConfig().asr.latencyMode,
-      audioProcessingBackend: this.db.getProviderConfig().asr.audioProcessingBackend,
-      voiceProcessingActive: this.db.getProviderConfig().asr.audioProcessingBackend !== "none",
+      requestedAudioProcessingBackend: this.db.getProviderConfig().asr.audioProcessingBackend,
+      audioProcessingBackend: "none",
+      voiceProcessingActive: false,
       currentLatencyMs: null,
       lastOverlapAt: null,
       inputQuality: "low",
@@ -592,7 +595,14 @@ export class MeetingService {
     const providerConfig = this.db.getProviderConfig();
     const helperPath = this.environmentService.getHelperBinaryPath();
     this.audioClient = new SystemAudioHelperClient(helperPath);
-    this.asrProvider =
+    const capabilities = await this.audioClient.getCapabilities().catch(() => ({ voiceProcessingSupported: false }));
+    const requestedAudioProcessingBackend = providerConfig.asr.audioProcessingBackend;
+    const resolvedAudioProcessingBackend = resolveActiveAudioProcessingBackend({
+      requested: requestedAudioProcessingBackend,
+      captureMode: this.recording.captureMode,
+      voiceProcessingAvailable: capabilities.voiceProcessingSupported
+    });
+    const createAsrProvider = (activeBackend: typeof resolvedAudioProcessingBackend) =>
       providerConfig.asr.providerId === "sensevoice-local"
         ? new SenseVoiceLocalProvider(
             {
@@ -614,7 +624,7 @@ export class MeetingService {
                 noiseSuppressionMode: providerConfig.asr.noiseSuppressionMode,
                 autoGainMode: providerConfig.asr.autoGainMode,
                 overlapDetectionEnabled: providerConfig.asr.overlapDetectionEnabled,
-                audioProcessingBackend: providerConfig.asr.audioProcessingBackend
+                audioProcessingBackend: activeBackend
               }
             },
             this.buildAsrCallbacks(sessionId)
@@ -622,21 +632,45 @@ export class MeetingService {
         : providerConfig.asr.providerId === "gemini-openai-audio"
           ? new GeminiOpenAIAudioAsrProvider(providerConfig.asr, this.buildAsrCallbacks(sessionId))
           : new OpenAICompatibleAsrProvider(providerConfig.asr, this.buildAsrCallbacks(sessionId));
+    const startCapture = async (backend: typeof resolvedAudioProcessingBackend) =>
+      this.audioClient?.startCapture(
+        deviceId,
+        {
+          captureMode: this.recording.captureMode,
+          backend
+        },
+        {
+          onAudioChunk: async (chunk) => {
+            this.trackAudioInput(chunk);
+            await this.asrProvider?.sendAudio(chunk);
+          },
+          onStatus: (message) => {
+            this.updatePartialText(message);
+          },
+          onError: (message) => {
+            this.setAudioState("device-error", message);
+            void this.handleRecordingFailure(new Error(message));
+          }
+        }
+      );
 
-    await this.asrProvider.start();
-    await this.audioClient.startCapture(deviceId, {
-      onAudioChunk: async (chunk) => {
-        this.trackAudioInput(chunk);
-        await this.asrProvider?.sendAudio(chunk);
-      },
-      onStatus: (message) => {
-        this.updatePartialText(message);
-      },
-      onError: (message) => {
-        this.setAudioState("device-error", message);
-        void this.handleRecordingFailure(new Error(message));
+    let activeAudioProcessingBackend = resolvedAudioProcessingBackend;
+    try {
+      this.asrProvider = createAsrProvider(activeAudioProcessingBackend);
+      await this.asrProvider.start();
+      await startCapture(activeAudioProcessingBackend);
+    } catch (error) {
+      if (activeAudioProcessingBackend === "system-voice-processing") {
+        await this.asrProvider?.stop().catch(() => {});
+        activeAudioProcessingBackend = "heuristic-apm";
+        this.asrProvider = createAsrProvider(activeAudioProcessingBackend);
+        await this.asrProvider.start();
+        await startCapture(activeAudioProcessingBackend);
+        this.updatePartialText("系统 Voice Processing 不可用，已回退到启发式 APM。");
+      } else {
+        throw error;
       }
-    });
+    }
 
     this.recording = {
       ...this.recording,
@@ -644,8 +678,9 @@ export class MeetingService {
       deviceId,
       deviceName,
       latencyMode: providerConfig.asr.latencyMode,
-      audioProcessingBackend: providerConfig.asr.audioProcessingBackend,
-      voiceProcessingActive: providerConfig.asr.audioProcessingBackend !== "none"
+      requestedAudioProcessingBackend,
+      audioProcessingBackend: activeAudioProcessingBackend,
+      voiceProcessingActive: activeAudioProcessingBackend === "system-voice-processing"
     };
   }
 
@@ -677,8 +712,9 @@ export class MeetingService {
       consecutiveAsrFailures: 0,
       consecutiveLowQualitySegments: 0,
       latencyMode: this.db.getProviderConfig().asr.latencyMode,
-      audioProcessingBackend: this.db.getProviderConfig().asr.audioProcessingBackend,
-      voiceProcessingActive: this.db.getProviderConfig().asr.audioProcessingBackend !== "none",
+      requestedAudioProcessingBackend: this.db.getProviderConfig().asr.audioProcessingBackend,
+      audioProcessingBackend: "none",
+      voiceProcessingActive: false,
       currentLatencyMs: null,
       lastOverlapAt: null,
       inputQuality: "low",

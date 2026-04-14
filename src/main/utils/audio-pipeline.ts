@@ -156,6 +156,14 @@ function detectAudioIssues(metrics: AudioMetrics): AudioIssue[] {
 }
 
 export function selectAudioProcessingBackend(config: Pick<ProviderConfig["asr"], "aecMode" | "noiseSuppressionMode" | "autoGainMode" | "audioProcessingBackend">): AudioProcessingBackend {
+  if (config.audioProcessingBackend === "system-voice-processing") {
+    return "system-voice-processing";
+  }
+
+  if (config.audioProcessingBackend === "none") {
+    return "none";
+  }
+
   if (config.aecMode === "off" && config.noiseSuppressionMode === "off" && config.autoGainMode === "off") {
     return "none";
   }
@@ -191,15 +199,15 @@ export function prepareAudioChunk(
     applyHighPassFilter(samples);
     applySoftClipProtection(samples);
   }
-  if (processingConfig.aecMode !== "off" && backend !== "none") {
+  if (processingConfig.aecMode !== "off" && backend === "heuristic-apm") {
     applyEchoAttenuation(samples);
   }
 
-  if (processingConfig.noiseSuppressionMode !== "off") {
+  if (processingConfig.noiseSuppressionMode !== "off" && backend !== "system-voice-processing") {
     const gate = Math.max(0.004, rawMetrics.rms * 0.22);
     applyNoiseGate(samples, gate);
   }
-  if (processingConfig.autoGainMode !== "off") {
+  if (processingConfig.autoGainMode !== "off" && backend !== "system-voice-processing") {
     applyAutoGain(samples, rawMetrics);
   }
 

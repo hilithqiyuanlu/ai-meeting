@@ -28,6 +28,9 @@ export class EnvironmentService {
 
     const helper = new SystemAudioHelperClient(helperBinaryPath);
     const audioDevices = helperBinaryFound ? await helper.listDevices().catch(() => []) : [];
+    const capabilities = helperBinaryFound
+      ? await helper.getCapabilities().catch(() => ({ voiceProcessingSupported: false }))
+      : { voiceProcessingSupported: false };
 
     const microphonePermission = this.getMicrophonePermission();
     const microphoneDevices = audioDevices.filter((device) => !device.isBlackHole);
@@ -42,8 +45,8 @@ export class EnvironmentService {
       audioDevices,
       microphoneDevices,
       systemAudioDevices,
-      voiceProcessingAvailable: false,
-      preferredAudioProcessingBackend: process.platform === "darwin" ? "heuristic-apm" : "none",
+      voiceProcessingAvailable: capabilities.voiceProcessingSupported,
+      preferredAudioProcessingBackend: capabilities.voiceProcessingSupported ? "system-voice-processing" : process.platform === "darwin" ? "heuristic-apm" : "none",
       helperBuildHint: "运行 `pnpm swift:build` 以构建 SystemAudioCaptureHelper",
       localAsrSupported: process.platform === "darwin",
       localModelState: localAsr.state,

@@ -91,4 +91,15 @@ describe("selectAudioProcessingBackend", () => {
       })
     ).toBe("heuristic-apm");
   });
+
+  it("keeps system voice processing when requested", () => {
+    expect(
+      selectAudioProcessingBackend({
+        aecMode: "auto",
+        noiseSuppressionMode: "auto",
+        autoGainMode: "auto",
+        audioProcessingBackend: "system-voice-processing"
+      })
+    ).toBe("system-voice-processing");
+  });
 });

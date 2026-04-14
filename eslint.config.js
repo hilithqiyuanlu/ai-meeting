@@ -5,7 +5,7 @@ import reactHooks from "eslint-plugin-react-hooks";
 
 export default tseslint.config(
   {
-    ignores: ["dist", "dist-electron", "out", "node_modules", "coverage", "vendor"]
+    ignores: ["dist", "dist-electron", "out", "node_modules", "coverage", "vendor", "electron.vite.config.ts", "icon"]
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,

@@ -1,5 +1,5 @@
 import { join } from "node:path";
-import type { CaptureMode, LocalAsrLanguage, ProviderConfig } from "@shared/types";
+import type { AudioProcessingBackend, CaptureMode, LocalAsrLanguage, ProviderConfig } from "@shared/types";
 import { LocalAsrModelService } from "@main/services/local-asr-model-service";
 import { createSenseVoiceRecognizer } from "@main/utils/sherpa-onnx";
 import { classifyTranscriptQuality, pcm16ToFloat32, prepareAudioChunk } from "@main/utils/audio-pipeline";
@@ -27,8 +27,9 @@ type SenseVoiceLocalProviderConfig = {
     | "noiseSuppressionMode"
     | "autoGainMode"
     | "overlapDetectionEnabled"
-    | "audioProcessingBackend"
-  >;
+  > & {
+    audioProcessingBackend: AudioProcessingBackend;
+  };
 };
 
 function deriveVadStrategy(config: SenseVoiceLocalProviderConfig["asr"]) {

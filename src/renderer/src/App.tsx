@@ -14,6 +14,9 @@ import type {
 } from "@shared/types";
 import { detectMeetingTerms, highlightText } from "./meeting-display";
 
+const SETTINGS_ICON =
+  "data:image/svg+xml;utf8,%3Csvg viewBox='0 0 1024 1024' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M449.194667 82.346667a128 128 0 0 1 125.610666 0l284.16 160a128 128 0 0 1 65.194667 111.530666v316.245334a128 128 0 0 1-65.194667 111.530666l-284.16 160a128 128 0 0 1-125.610666 0l-284.16-160a128 128 0 0 1-65.194667-111.530666V353.877333A128 128 0 0 1 165.034667 242.346667z m83.754666 74.410666a42.666667 42.666667 0 0 0-41.898666 0L206.933333 316.714667a42.666667 42.666667 0 0 0-21.76 37.162666v316.245334a42.666667 42.666667 0 0 0 21.76 37.162666l284.16 160a42.666667 42.666667 0 0 0 41.898667 0l284.16-160a42.666667 42.666667 0 0 0 21.76-37.162666V353.877333a42.666667 42.666667 0 0 0-21.76-37.162666zM512 341.333333a170.666667 170.666667 0 1 1 0 341.333334 170.666667 170.666667 0 0 1 0-341.333334z m0 85.333334a85.333333 85.333333 0 1 0 0 170.666666 85.333333 85.333333 0 0 0 0-170.666666z' fill='%23737373'/%3E%3C/svg%3E";
+
 type TabId = "capture" | "settings";
 
 const copy = {
@@ -69,6 +72,7 @@ const copy = {
     startMeetingHint: "开始一场新会议后，记录会出现在这里。",
     systemPreferences: "设置中心",
     runtime: "运行状态",
+    expandRuntimeHint: "点击展开可查看详细运行指标与实时电平。",
     systemStatus: "System Status",
     low: "低",
     medium: "中",
@@ -231,8 +235,13 @@ const copy = {
     issueLowLevel: "音量低",
     issueClipping: "过载",
     audioBackend: "前处理后端",
+    requestedBackend: "请求后端",
+    activeBackend: "实际后端",
+    processingCapability: "系统能力",
     processingStatus: "前处理状态",
+    backendAuto: "自动",
     backendHeuristic: "启发式 APM",
+    backendSystem: "系统 Voice Processing",
     backendNone: "未启用",
     processingActive: "前处理已启用",
     processingInactive: "前处理未启用",
@@ -242,8 +251,10 @@ const copy = {
     skippedSilence: "静音跳过",
     totalLowQualitySegments: "低质量累计",
     stitchSuppressed: "去重压制",
-    processingNote: "当前仅实现启发式音频前处理，不包含系统级 voice processing。",
+    processingNote: "系统后端优先使用 macOS 整体处理能力，不逐项保证 AEC / NS / AGC 独立控制；不可用时会自动回退。",
     preferredBackend: "推荐后端",
+    capabilityAvailable: "可用",
+    capabilityUnavailable: "不可用",
     termLibrary: "术语/热词库",
     enableCustomTerms: "启用自定义术语库",
     termLibraryNote: "术语标准化会同时使用内置词库和你启用的自定义词条；别名每行一个。",
@@ -313,6 +324,7 @@ const copy = {
     startMeetingHint: "Your meetings will appear here after you start one.",
     systemPreferences: "Settings",
     runtime: "Runtime Status",
+    expandRuntimeHint: "Open to inspect runtime metrics and the live level.",
     systemStatus: "System Status",
     low: "Low",
     medium: "Medium",
@@ -475,8 +487,13 @@ const copy = {
     issueLowLevel: "Low level",
     issueClipping: "Clipping",
     audioBackend: "Processing Backend",
+    requestedBackend: "Requested Backend",
+    activeBackend: "Active Backend",
+    processingCapability: "System Capability",
     processingStatus: "Processing Status",
+    backendAuto: "Auto",
     backendHeuristic: "Heuristic APM",
+    backendSystem: "System Voice Processing",
     backendNone: "Disabled",
     processingActive: "Processing active",
     processingInactive: "Processing inactive",
@@ -486,8 +503,10 @@ const copy = {
     skippedSilence: "Silence Skips",
     totalLowQualitySegments: "Low-quality Total",
     stitchSuppressed: "Dedupe Suppressed",
-    processingNote: "Only heuristic audio preprocessing is implemented in v0.4.4. System voice processing is not wired in.",
+    processingNote: "The system backend uses macOS voice processing as a whole, without guaranteeing separate AEC / NS / AGC controls. It falls back automatically when unavailable.",
     preferredBackend: "Preferred Backend",
+    capabilityAvailable: "Available",
+    capabilityUnavailable: "Unavailable",
     termLibrary: "Term Library",
     enableCustomTerms: "Enable custom term library",
     termLibraryNote: "Normalization uses built-in terms plus enabled custom entries. Put one alias per line.",
@@ -640,6 +659,26 @@ function audioIssueLabel(issue: MeetingDetail["transcriptSegments"][number]["aud
   }
 }
 
+function audioProcessingBackendLabel(
+  backend: ProviderConfig["asr"]["audioProcessingBackend"] | RecordingSnapshot["audioProcessingBackend"] | EnvironmentStatus["preferredAudioProcessingBackend"],
+  language: UiLanguage
+): string {
+  switch (backend) {
+    case "auto":
+      return t(language, "backendAuto");
+    case "system-voice-processing":
+      return t(language, "backendSystem");
+    case "heuristic-apm":
+      return t(language, "backendHeuristic");
+    default:
+      return t(language, "backendNone");
+  }
+}
+
+function processingCapabilityLabel(available: boolean, language: UiLanguage): string {
+  return available ? t(language, "capabilityAvailable") : t(language, "capabilityUnavailable");
+}
+
 function customTermAliasesText(entry: CustomTermEntry): string {
   return entry.aliases.join("\n");
 }
@@ -766,14 +805,6 @@ function meetingListTitle(session: MeetingSession, language: UiLanguage): string
   return isLegacyAutoMeetingTitle(session.title)
     ? formatCompactDateTime(session.startedAt, language)
     : session.title.trim() || formatCompactDateTime(session.startedAt, language);
-}
-
-function meetingDisplayTitle(session: MeetingSession | null, language: UiLanguage): string {
-  if (!session) {
-    return t(language, "realtimeRecord");
-  }
-
-  return meetingListTitle(session, language);
 }
 
 function getPreferredDevice(
@@ -915,6 +946,15 @@ export function App() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [deleteTarget, deletingSessionId]);
+
+  useEffect(() => {
+    if (!notice) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => setNotice(""), 2600);
+    return () => window.clearTimeout(timer);
+  }, [notice]);
 
   const selectedDeviceId = useMemo(() => {
     if (!bootstrap) {
@@ -1219,16 +1259,6 @@ export function App() {
       <div className="app-shell">
         <aside className="sidebar">
           <div className="sidebar-panel">
-            <div className="sidebar-search-shell">
-              <input
-                aria-label={t(uiLanguage, "searchPlaceholder")}
-                className="sidebar-search"
-                disabled
-                placeholder={t(uiLanguage, "searchPlaceholder")}
-                type="search"
-              />
-            </div>
-
             <HistoryPanel
               language={uiLanguage}
               sessions={state.sessions}
@@ -1250,11 +1280,13 @@ export function App() {
             />
 
             <div className="sidebar-footer">
+              {notice ? <div className="sidebar-notice">{notice}</div> : null}
               <button
                 className={activeTab === "settings" ? "sidebar-settings active" : "sidebar-settings"}
                 type="button"
                 onClick={() => setActiveTab("settings")}
               >
+                <img alt="" className="sidebar-settings-icon" src={SETTINGS_ICON} />
                 <span className="sidebar-settings-label">{t(uiLanguage, "settings")}</span>
               </button>
             </div>
@@ -1262,13 +1294,6 @@ export function App() {
         </aside>
 
         <main className="workspace">
-          <header className="workspace-header">
-            <div className="workspace-heading">
-              <h2>{activeTab === "settings" ? t(uiLanguage, "systemPreferences") : meetingDisplayTitle(currentSession, uiLanguage)}</h2>
-            </div>
-            {notice ? <div className="notice">{notice}</div> : null}
-          </header>
-
           <section className="workspace-content">
             <div className={activeTab === "capture" ? "panel primary capture-layout" : "panel primary scrollable"}>
               {activeTab === "capture" ? (
@@ -1396,6 +1421,18 @@ function CapturePanel(props: {
       value: transcriptQualityLabel(props.recording.inputQuality, props.language)
     },
     {
+      label: t(props.language, "requestedBackend"),
+      value: audioProcessingBackendLabel(props.recording.requestedAudioProcessingBackend, props.language)
+    },
+    {
+      label: t(props.language, "activeBackend"),
+      value: audioProcessingBackendLabel(props.recording.audioProcessingBackend, props.language)
+    },
+    {
+      label: t(props.language, "processingCapability"),
+      value: processingCapabilityLabel(props.environment.voiceProcessingAvailable, props.language)
+    },
+    {
       label: t(props.language, "lastAudio"),
       value: formatRelativeStatus(props.recording.lastAudioAt, props.language)
     },
@@ -1415,6 +1452,7 @@ function CapturePanel(props: {
       >
         <div className="accordion-trigger-main">
           <h4>{t(props.language, "runtime")}</h4>
+          <p className="capture-status-copy">{t(props.language, "expandRuntimeHint")}</p>
         </div>
         <div className="accordion-trigger-side compact">
           <span className={`session-status-pill compact tone-${meetingStatusTone(props.currentSession?.status ?? "idle")}`}>
@@ -1446,7 +1484,10 @@ function CapturePanel(props: {
             <div className="section-head">
               <div>
                 <h4>{t(props.language, "liveLevel")}</h4>
-                <p className="muted">{latencyModeLabel(props.recording.latencyMode, props.language)} · {audioStateLabel(props.recording.audioState, props.language)}</p>
+                <p className="muted">
+                  {latencyModeLabel(props.recording.latencyMode, props.language)} · {audioStateLabel(props.recording.audioState, props.language)} ·{" "}
+                  {audioProcessingBackendLabel(props.recording.audioProcessingBackend, props.language)}
+                </p>
               </div>
             </div>
             <div className="level-track">
@@ -1867,6 +1908,38 @@ function SettingsPanel(props: {
                     <span>{t(props.language, "enableOverlapDetection")}</span>
                   </label>
                 </div>
+                <label className="form-field">
+                  <span>{t(props.language, "audioBackend")}</span>
+                  <select
+                    value={providerDraft.asr.audioProcessingBackend}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: {
+                          ...providerDraft.asr,
+                          audioProcessingBackend: event.target.value as ProviderConfig["asr"]["audioProcessingBackend"]
+                        }
+                      })
+                    }
+                  >
+                    <option value="auto">{t(props.language, "backendAuto")}</option>
+                    <option value="system-voice-processing" disabled={preferenceDraft.captureMode === "system-audio"}>
+                      {t(props.language, "backendSystem")}
+                    </option>
+                    <option value="heuristic-apm">{t(props.language, "backendHeuristic")}</option>
+                    <option value="none">{t(props.language, "backendNone")}</option>
+                  </select>
+                </label>
+                <div className="guide-grid">
+                  <div className="guide-card">
+                    <span className="guide-label">{t(props.language, "requestedBackend")}</span>
+                    <strong className="mono-text">{audioProcessingBackendLabel(providerDraft.asr.audioProcessingBackend, props.language)}</strong>
+                  </div>
+                  <div className="guide-card">
+                    <span className="guide-label">{t(props.language, "preferredBackend")}</span>
+                    <strong className="mono-text">{audioProcessingBackendLabel(environment.preferredAudioProcessingBackend, props.language)}</strong>
+                  </div>
+                </div>
                 <p className="muted">{t(props.language, "processingNote")}</p>
                 <div className="settings-inline-actions">
                   <button
@@ -2189,7 +2262,7 @@ function TranscriptPanel(props: {
   }
 
   return (
-    <div className="detail-card transcript-card">
+    <div className={props.meetingTerms.length > 0 ? "detail-card transcript-card has-terms" : "detail-card transcript-card"}>
       <div className="section-head">
         <div>
           <h4>{t(props.language, "transcript")}</h4>
@@ -2197,7 +2270,7 @@ function TranscriptPanel(props: {
         <span className="mono-text">{countLabel(props.detail.transcriptSegments.length, "segmentUnit", props.language)}</span>
       </div>
       {props.meetingTerms.length > 0 ? (
-        <div className="term-strip scrollable">
+        <div className="term-strip scrollable transcript-term-strip">
           {props.meetingTerms.slice(0, 8).map((term) => (
             <span key={term} className="status-tag term-chip">
               {term}

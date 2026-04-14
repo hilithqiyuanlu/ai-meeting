@@ -2,7 +2,7 @@ import { execFile, spawn, type ChildProcessByStdio } from "node:child_process";
 import { access } from "node:fs/promises";
 import type { Readable } from "node:stream";
 import { promisify } from "node:util";
-import type { AudioInputDevice } from "@shared/types";
+import type { AudioInputDevice, AudioProcessingBackend, CaptureMode } from "@shared/types";
 
 const execFileAsync = promisify(execFile);
 
@@ -16,6 +16,15 @@ interface HelperOutputEvent {
   type: "status" | "error" | "audio_chunk";
   message?: string;
   pcmBase64?: string;
+}
+
+interface HelperCapabilitiesResponse {
+  voiceProcessingSupported: boolean;
+}
+
+interface CaptureOptions {
+  captureMode: CaptureMode;
+  backend: AudioProcessingBackend;
 }
 
 export class SystemAudioHelperClient {
@@ -47,7 +56,16 @@ export class SystemAudioHelperClient {
     return payload.devices;
   }
 
-  async startCapture(deviceId: string, callbacks: CaptureCallbacks): Promise<void> {
+  async getCapabilities(): Promise<HelperCapabilitiesResponse> {
+    if (!(await this.isAvailable()) || !this.helperBinaryPath) {
+      return { voiceProcessingSupported: false };
+    }
+
+    const { stdout } = await execFileAsync(this.helperBinaryPath, ["capabilities"]);
+    return JSON.parse(stdout) as HelperCapabilitiesResponse;
+  }
+
+  async startCapture(deviceId: string, options: CaptureOptions, callbacks: CaptureCallbacks): Promise<void> {
     if (!(await this.isAvailable()) || !this.helperBinaryPath) {
       throw new Error("SystemAudioCaptureHelper 未构建，请先执行 pnpm swift:build");
     }
@@ -55,7 +73,8 @@ export class SystemAudioHelperClient {
       throw new Error("音频采集已在运行");
     }
 
-    const proc = spawn(this.helperBinaryPath, ["capture", "--device-id", deviceId], {
+    const args = ["capture", "--device-id", deviceId, "--backend", options.backend, "--capture-mode", options.captureMode];
+    const proc = spawn(this.helperBinaryPath, args, {
       stdio: ["ignore", "pipe", "pipe"]
     });
     this.process = proc;

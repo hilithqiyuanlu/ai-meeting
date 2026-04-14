@@ -15,7 +15,7 @@
       "noiseSuppressionMode": "auto",
       "autoGainMode": "auto",
       "overlapDetectionEnabled": true,
-      "audioProcessingBackend": "heuristic-apm"
+      "audioProcessingBackend": "system-voice-processing"
     }
   },
   "items": [

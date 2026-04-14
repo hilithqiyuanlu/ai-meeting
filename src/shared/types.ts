@@ -11,7 +11,8 @@ export type LocalAsrModelState = "not-downloaded" | "downloading" | "ready" | "e
 export type UiLanguage = "zh-CN" | "en-US";
 export type AsrLatencyMode = "fast" | "balanced" | "accurate";
 export type AudioProcessingMode = "auto" | "off" | "on";
-export type AudioProcessingBackend = "none" | "heuristic-apm";
+export type AudioProcessingBackend = "none" | "heuristic-apm" | "system-voice-processing";
+export type AudioProcessingBackendPreference = "auto" | AudioProcessingBackend;
 export type TranscriptQuality = "high" | "medium" | "low";
 export type AudioIssue = "echo" | "noise" | "low-level" | "clipping";
 export type HighlightKind = "decision" | "action" | "risk" | "follow-up";
@@ -121,7 +122,7 @@ export interface ProviderConfig {
     noiseSuppressionMode: AudioProcessingMode;
     autoGainMode: AudioProcessingMode;
     overlapDetectionEnabled: boolean;
-    audioProcessingBackend: AudioProcessingBackend;
+    audioProcessingBackend: AudioProcessingBackendPreference;
   };
   llm: {
     providerId: LlmProviderId;
@@ -205,6 +206,7 @@ export interface RecordingSnapshot {
   consecutiveAsrFailures: number;
   consecutiveLowQualitySegments: number;
   latencyMode: AsrLatencyMode;
+  requestedAudioProcessingBackend: AudioProcessingBackendPreference;
   audioProcessingBackend: AudioProcessingBackend;
   voiceProcessingActive: boolean;
   currentLatencyMs: number | null;

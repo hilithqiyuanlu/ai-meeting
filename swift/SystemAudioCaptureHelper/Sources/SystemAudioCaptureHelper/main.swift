@@ -1,6 +1,19 @@
 import AVFoundation
+import AudioToolbox
+import CoreAudio
 import CoreMedia
 import Foundation
+
+enum CaptureBackend: String {
+    case none = "none"
+    case heuristicApm = "heuristic-apm"
+    case systemVoiceProcessing = "system-voice-processing"
+}
+
+enum CaptureMode: String {
+    case microphone = "microphone"
+    case systemAudio = "system-audio"
+}
 
 struct AudioDeviceInfo: Encodable {
     let id: String
@@ -10,6 +23,10 @@ struct AudioDeviceInfo: Encodable {
 
 struct DevicesResponse: Encodable {
     let devices: [AudioDeviceInfo]
+}
+
+struct CapabilitiesResponse: Encodable {
+    let voiceProcessingSupported: Bool
 }
 
 struct HelperEvent: Encodable {
@@ -35,6 +52,43 @@ func writeError(_ message: String) {
     writeJSON(HelperEvent(type: "error", message: message, pcmBase64: nil))
 }
 
+func stringProperty(deviceID: AudioDeviceID, selector: AudioObjectPropertySelector) -> String? {
+    var propertyAddress = AudioObjectPropertyAddress(
+        mSelector: selector,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var value: CFString = "" as CFString
+    var size = UInt32(MemoryLayout<CFString>.size)
+    let status = AudioObjectGetPropertyData(deviceID, &propertyAddress, 0, nil, &size, &value)
+    guard status == noErr else {
+        return nil
+    }
+    return value as String
+}
+
+func audioDeviceIDs() -> [AudioDeviceID] {
+    var propertyAddress = AudioObjectPropertyAddress(
+        mSelector: kAudioHardwarePropertyDevices,
+        mScope: kAudioObjectPropertyScopeGlobal,
+        mElement: kAudioObjectPropertyElementMain
+    )
+    var size: UInt32 = 0
+    guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &size) == noErr else {
+        return []
+    }
+    let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+    var deviceIDs = Array(repeating: AudioDeviceID(), count: count)
+    guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &size, &deviceIDs) == noErr else {
+        return []
+    }
+    return deviceIDs
+}
+
+func audioDeviceID(for uid: String) -> AudioDeviceID? {
+    audioDeviceIDs().first(where: { stringProperty(deviceID: $0, selector: kAudioDevicePropertyDeviceUID) == uid })
+}
+
 func listDevices() -> [AudioDeviceInfo] {
     AVCaptureDevice.devices(for: .audio).map { device in
         AudioDeviceInfo(
@@ -45,7 +99,7 @@ func listDevices() -> [AudioDeviceInfo] {
     }
 }
 
-final class AudioChunkEmitter: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
+final class PCMChunkEmitter: NSObject, AVCaptureAudioDataOutputSampleBufferDelegate {
     private let targetFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 16_000, channels: 1, interleaved: true)!
     private let chunkBytes = 16_000 * 2
     private var converter: AVAudioConverter?
@@ -55,7 +109,10 @@ final class AudioChunkEmitter: NSObject, AVCaptureAudioDataOutputSampleBufferDel
         guard let sourceBuffer = makePCMBuffer(from: sampleBuffer) else {
             return
         }
+        consume(sourceBuffer)
+    }
 
+    func consume(_ sourceBuffer: AVAudioPCMBuffer) {
         if converter == nil || converter?.inputFormat != sourceBuffer.format {
             converter = AVAudioConverter(from: sourceBuffer.format, to: targetFormat)
         }
@@ -155,13 +212,32 @@ final class AudioChunkEmitter: NSObject, AVCaptureAudioDataOutputSampleBufferDel
     }
 }
 
-final class CaptureRuntime {
+func hasVoiceProcessingComponent() -> Bool {
+    var description = AudioComponentDescription(
+        componentType: kAudioUnitType_Output,
+        componentSubType: kAudioUnitSubType_VoiceProcessingIO,
+        componentManufacturer: kAudioUnitManufacturer_Apple,
+        componentFlags: 0,
+        componentFlagsMask: 0
+    )
+    return AudioComponentFindNext(nil, &description) != nil
+}
+
+func supportsVoiceProcessing() -> Bool {
+    guard #available(macOS 13.0, *) else {
+        return false
+    }
+
+    return hasVoiceProcessingComponent()
+}
+
+final class RawCaptureRuntime {
     private let session = AVCaptureSession()
-    private let delegate = AudioChunkEmitter()
-    private let queue = DispatchQueue(label: "ai-meeting.audio.capture")
+    private let delegate = PCMChunkEmitter()
+    private let queue = DispatchQueue(label: "ai-meeting.audio.capture.raw")
     private var signalSource: DispatchSourceSignal?
 
-    func start(deviceId: String) throws {
+    func start(deviceId: String, backend: CaptureBackend) throws {
         guard let device = AVCaptureDevice.devices(for: .audio).first(where: { $0.uniqueID == deviceId }) else {
             throw NSError(domain: "SystemAudioCaptureHelper", code: 1, userInfo: [NSLocalizedDescriptionKey: "未找到音频设备"])
         }
@@ -182,17 +258,13 @@ final class CaptureRuntime {
         session.addOutput(output)
         session.commitConfiguration()
 
-        signal(SIGINT, SIG_IGN)
-        signal(SIGTERM, SIG_IGN)
-
-        signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        signalSource?.setEventHandler { [weak self] in
+        installSignalHandler(stopHandler: { [weak self] in
             self?.stop()
             exit(0)
-        }
-        signalSource?.resume()
+        })
 
-        writeStatus("开始采集设备：\(device.localizedName)")
+        let backendLabel = backend == .heuristicApm ? "启发式 APM 原始链" : "原始链"
+        writeStatus("开始采集设备：\(device.localizedName)（\(backendLabel)）")
         session.startRunning()
         RunLoop.main.run()
     }
@@ -203,6 +275,75 @@ final class CaptureRuntime {
         }
         writeStatus("音频采集已停止")
     }
+
+    private func installSignalHandler(stopHandler: @escaping () -> Void) {
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+
+        signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        signalSource?.setEventHandler(handler: stopHandler)
+        signalSource?.resume()
+    }
+}
+
+@available(macOS 13.0, *)
+final class VoiceProcessingCaptureRuntime {
+    private let engine = AVAudioEngine()
+    private let emitter = PCMChunkEmitter()
+    private var signalSource: DispatchSourceSignal?
+
+    func start(deviceId: String) throws {
+        guard supportsVoiceProcessing() else {
+            throw NSError(domain: "SystemAudioCaptureHelper", code: 10, userInfo: [NSLocalizedDescriptionKey: "系统 Voice Processing 当前不可用"])
+        }
+
+        guard let device = AVCaptureDevice.devices(for: .audio).first(where: { $0.uniqueID == deviceId }) else {
+            throw NSError(domain: "SystemAudioCaptureHelper", code: 11, userInfo: [NSLocalizedDescriptionKey: "未找到音频设备"])
+        }
+
+        if let audioObjectID = audioDeviceID(for: deviceId) {
+            try engine.inputNode.auAudioUnit.setDeviceID(audioObjectID)
+        }
+
+        try engine.inputNode.setVoiceProcessingEnabled(true)
+        let inputFormat = engine.inputNode.outputFormat(forBus: 0)
+        engine.inputNode.installTap(onBus: 0, bufferSize: 2048, format: inputFormat) { [weak self] buffer, _ in
+            self?.emitter.consume(buffer)
+        }
+
+        installSignalHandler(stopHandler: { [weak self] in
+            self?.stop()
+            exit(0)
+        })
+
+        writeStatus("开始采集设备：\(device.localizedName)（系统 Voice Processing）")
+        engine.prepare()
+        try engine.start()
+        RunLoop.main.run()
+    }
+
+    func stop() {
+        engine.inputNode.removeTap(onBus: 0)
+        engine.stop()
+        try? engine.inputNode.setVoiceProcessingEnabled(false)
+        writeStatus("音频采集已停止")
+    }
+
+    private func installSignalHandler(stopHandler: @escaping () -> Void) {
+        signal(SIGINT, SIG_IGN)
+        signal(SIGTERM, SIG_IGN)
+
+        signalSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
+        signalSource?.setEventHandler(handler: stopHandler)
+        signalSource?.resume()
+    }
+}
+
+func parseArgument(_ name: String, in arguments: [String]) -> String? {
+    guard let index = arguments.firstIndex(of: name), arguments.count > index + 1 else {
+        return nil
+    }
+    return arguments[index + 1]
 }
 
 let arguments = Array(CommandLine.arguments.dropFirst())
@@ -210,22 +351,36 @@ let arguments = Array(CommandLine.arguments.dropFirst())
 switch arguments.first {
 case "devices":
     writeJSON(DevicesResponse(devices: listDevices()))
+case "capabilities":
+    writeJSON(CapabilitiesResponse(voiceProcessingSupported: supportsVoiceProcessing()))
 case "capture":
-    guard let flagIndex = arguments.firstIndex(of: "--device-id"),
-          arguments.count > flagIndex + 1 else {
+    guard let deviceId = parseArgument("--device-id", in: arguments) else {
         writeError("缺少 --device-id")
         exit(2)
     }
 
-    let deviceId = arguments[flagIndex + 1]
+    let captureMode = CaptureMode(rawValue: parseArgument("--capture-mode", in: arguments) ?? CaptureMode.microphone.rawValue) ?? .microphone
+    let backend = CaptureBackend(rawValue: parseArgument("--backend", in: arguments) ?? CaptureBackend.none.rawValue) ?? .none
+
     do {
-        let runtime = CaptureRuntime()
-        try runtime.start(deviceId: deviceId)
+        if captureMode == .microphone && backend == .systemVoiceProcessing {
+            if #available(macOS 13.0, *) {
+                let runtime = VoiceProcessingCaptureRuntime()
+                try runtime.start(deviceId: deviceId)
+            } else {
+                throw NSError(domain: "SystemAudioCaptureHelper", code: 12, userInfo: [NSLocalizedDescriptionKey: "当前系统版本不支持 Voice Processing"])
+            }
+        } else {
+            let runtime = RawCaptureRuntime()
+            try runtime.start(deviceId: deviceId, backend: backend)
+        }
     } catch {
         writeError(error.localizedDescription)
         exit(1)
     }
 default:
-    FileHandle.standardError.write(Data("Usage: SystemAudioCaptureHelper devices | capture --device-id <id>\n".utf8))
+    FileHandle.standardError.write(
+        Data("Usage: SystemAudioCaptureHelper devices | capabilities | capture --device-id <id> --backend <none|heuristic-apm|system-voice-processing> --capture-mode <microphone|system-audio>\n".utf8)
+    )
     exit(2)
 }
