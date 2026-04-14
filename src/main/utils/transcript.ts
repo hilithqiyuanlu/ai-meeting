@@ -1,4 +1,5 @@
-import { normalizeWithTermRegistry } from "./term-registry";
+import { normalizeWithTermLibrary } from "@shared/term-library";
+import type { AppPreferences } from "@shared/types";
 
 export function trimOverlappedTranscript(previous: string, current: string): { text: string; overlapChars: number } {
   const prev = previous.trim();
@@ -23,8 +24,8 @@ export function trimOverlappedTranscript(previous: string, current: string): { t
   return { text: next, overlapChars: 0 };
 }
 
-function normalizeTerminology(input: string): string {
-  return normalizeWithTermRegistry(input);
+function normalizeTerminology(input: string, preferences?: Pick<AppPreferences, "customTermLibraryEnabled" | "customTerms"> | null): string {
+  return normalizeWithTermLibrary(input, preferences);
 }
 
 function collapseRepeatingPhrases(input: string): string {
@@ -63,7 +64,10 @@ function normalizeForCompare(input: string): string {
   return input.replace(/\s+/g, "").replace(/[，。！？!?、,.:：；;]/g, "").toLowerCase();
 }
 
-export function normalizeTranscriptText(input: string): string {
+export function normalizeTranscriptText(
+  input: string,
+  preferences?: Pick<AppPreferences, "customTermLibraryEnabled" | "customTerms"> | null
+): string {
   return collapseRepeatingClauses(
     collapseRepeatingPhrases(
       normalizeTerminology(
@@ -72,15 +76,20 @@ export function normalizeTranscriptText(input: string): string {
           .replace(/[，。！？,.!?]{2,}/g, "。")
           .replace(/^\s*[嗯啊呃]+\s*/g, "")
           .replace(/\b([A-Za-z]+)(\s+\1\b)+/gi, "$1")
-          .trim()
+          .trim(),
+        preferences
       )
     )
   );
 }
 
-export function stitchTranscript(previous: string, current: string): { text: string; overlapChars: number } {
-  const normalized = normalizeTranscriptText(current);
-  const previousNormalized = normalizeTranscriptText(previous);
+export function stitchTranscript(
+  previous: string,
+  current: string,
+  preferences?: Pick<AppPreferences, "customTermLibraryEnabled" | "customTerms"> | null
+): { text: string; overlapChars: number } {
+  const normalized = normalizeTranscriptText(current, preferences);
+  const previousNormalized = normalizeTranscriptText(previous, preferences);
 
   if (!normalized) {
     return { text: "", overlapChars: 0 };

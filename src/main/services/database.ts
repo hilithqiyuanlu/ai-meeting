@@ -2,6 +2,7 @@ import Database from "better-sqlite3";
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
+import { sanitizeCustomTerms } from "@shared/term-library";
 import type {
   MeetingHighlight,
   AppPreferences,
@@ -55,7 +56,9 @@ const defaultPreferences: AppPreferences = {
   exportIncludePlaceholders: true,
   captureMode: "microphone",
   onboardingCompleted: false,
-  uiLanguage: "zh-CN"
+  uiLanguage: "zh-CN",
+  customTermLibraryEnabled: true,
+  customTerms: []
 };
 
 type SessionRow = Omit<MeetingSession, "durationMs"> & { duration_ms: number };
@@ -134,6 +137,8 @@ export class AppDatabase {
         bulletPointsJson TEXT NOT NULL,
         actionItemsJson TEXT NOT NULL,
         risksJson TEXT NOT NULL,
+        decisionsJson TEXT NOT NULL DEFAULT '[]',
+        issuesJson TEXT NOT NULL DEFAULT '[]',
         rawResponse TEXT NOT NULL,
         sourceSegmentSeq INTEGER NOT NULL DEFAULT 0,
         sourceTranscriptChars INTEGER NOT NULL DEFAULT 0,
@@ -188,6 +193,8 @@ export class AppDatabase {
     this.ensureColumn("summaries", "sourceSegmentSeq", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("summaries", "sourceTranscriptChars", "INTEGER NOT NULL DEFAULT 0");
     this.ensureColumn("summaries", "generatedWhileStatus", "TEXT NOT NULL DEFAULT 'completed'");
+    this.ensureColumn("summaries", "decisionsJson", "TEXT NOT NULL DEFAULT '[]'");
+    this.ensureColumn("summaries", "issuesJson", "TEXT NOT NULL DEFAULT '[]'");
   }
 
   private seedDefaults(): void {
@@ -422,9 +429,11 @@ export class AppDatabase {
     const payload = {
       sessionId: summary.sessionId,
       overview: summary.overview,
-      bulletPointsJson: JSON.stringify(summary.bulletPoints),
+      bulletPointsJson: JSON.stringify(summary.decisions),
       actionItemsJson: JSON.stringify(summary.actionItems),
-      risksJson: JSON.stringify(summary.risks),
+      risksJson: JSON.stringify(summary.issues),
+      decisionsJson: JSON.stringify(summary.decisions),
+      issuesJson: JSON.stringify(summary.issues),
       rawResponse: summary.rawResponse,
       sourceSegmentSeq: summary.sourceSegmentSeq,
       sourceTranscriptChars: summary.sourceTranscriptChars,
@@ -435,11 +444,11 @@ export class AppDatabase {
 
     this.db.prepare(`
       INSERT INTO summaries (
-        sessionId, overview, bulletPointsJson, actionItemsJson, risksJson, rawResponse,
+        sessionId, overview, bulletPointsJson, actionItemsJson, risksJson, decisionsJson, issuesJson, rawResponse,
         sourceSegmentSeq, sourceTranscriptChars, generatedWhileStatus, createdAt, updatedAt
       )
       VALUES (
-        @sessionId, @overview, @bulletPointsJson, @actionItemsJson, @risksJson, @rawResponse,
+        @sessionId, @overview, @bulletPointsJson, @actionItemsJson, @risksJson, @decisionsJson, @issuesJson, @rawResponse,
         @sourceSegmentSeq, @sourceTranscriptChars, @generatedWhileStatus, @createdAt, @updatedAt
       )
       ON CONFLICT(sessionId) DO UPDATE SET
@@ -447,6 +456,8 @@ export class AppDatabase {
         bulletPointsJson = excluded.bulletPointsJson,
         actionItemsJson = excluded.actionItemsJson,
         risksJson = excluded.risksJson,
+        decisionsJson = excluded.decisionsJson,
+        issuesJson = excluded.issuesJson,
         rawResponse = excluded.rawResponse,
         sourceSegmentSeq = excluded.sourceSegmentSeq,
         sourceTranscriptChars = excluded.sourceTranscriptChars,
@@ -465,6 +476,8 @@ export class AppDatabase {
           bulletPointsJson: string;
           actionItemsJson: string;
           risksJson: string;
+          decisionsJson?: string;
+          issuesJson?: string;
           rawResponse: string;
           sourceSegmentSeq?: number;
           sourceTranscriptChars?: number;
@@ -478,12 +491,28 @@ export class AppDatabase {
       return null;
     }
 
+    const actionItems = (JSON.parse(row.actionItemsJson) as Array<string | { text?: string; owner?: string | null; due?: string | null }>)
+      .map((item) =>
+        typeof item === "string"
+          ? {
+              text: item,
+              owner: null,
+              due: null
+            }
+          : {
+              text: item.text?.trim() ?? "",
+              owner: item.owner?.trim() || null,
+              due: item.due?.trim() || null
+            }
+      )
+      .filter((item) => item.text);
+
     return {
       sessionId: row.sessionId,
       overview: row.overview,
-      bulletPoints: JSON.parse(row.bulletPointsJson) as string[],
-      actionItems: JSON.parse(row.actionItemsJson) as string[],
-      risks: JSON.parse(row.risksJson) as string[],
+      actionItems,
+      decisions: JSON.parse(row.decisionsJson ?? row.bulletPointsJson) as string[],
+      issues: JSON.parse(row.issuesJson ?? row.risksJson) as string[],
       rawResponse: row.rawResponse,
       sourceSegmentSeq: row.sourceSegmentSeq ?? 0,
       sourceTranscriptChars: row.sourceTranscriptChars ?? 0,
@@ -497,7 +526,6 @@ export class AppDatabase {
     return {
       session: this.getSession(sessionId),
       transcriptSegments: this.listTranscriptSegments(sessionId),
-      highlights: this.listHighlights(sessionId),
       summary: this.getSummary(sessionId),
       qaItems: this.listQaItems(sessionId)
     };
@@ -566,14 +594,21 @@ export class AppDatabase {
 
   getPreferences(): AppPreferences {
     const row = this.db.prepare("SELECT json FROM app_preferences WHERE id = 1").get() as { json: string };
+    const parsed = JSON.parse(row.json) as Partial<AppPreferences>;
     return {
       ...defaultPreferences,
-      ...(JSON.parse(row.json) as Partial<AppPreferences>)
+      ...parsed,
+      customTerms: sanitizeCustomTerms(parsed.customTerms ?? [])
     };
   }
 
   savePreferences(preferences: AppPreferences): AppPreferences {
-    this.db.prepare("UPDATE app_preferences SET json = ? WHERE id = 1").run(JSON.stringify(preferences));
+    this.db.prepare("UPDATE app_preferences SET json = ? WHERE id = 1").run(
+      JSON.stringify({
+        ...preferences,
+        customTerms: sanitizeCustomTerms(preferences.customTerms)
+      })
+    );
     return this.getPreferences();
   }
 

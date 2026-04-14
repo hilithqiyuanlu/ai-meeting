@@ -1,104 +1,29 @@
 import type { ReactNode } from "react";
-import type { MeetingDetail } from "@shared/types";
-import registry from "@shared/term-registry.json";
-
-const KNOWN_TERMS = (registry as Array<{ canonical: string }>).map((item) => item.canonical).concat([
-  "API",
-  "Full",
-  "Design Proctor"
-]);
-
-const TOKEN_STOPWORDS = new Set([
-  "the",
-  "and",
-  "for",
-  "with",
-  "this",
-  "that",
-  "from",
-  "into",
-  "http",
-  "https",
-  "audio",
-  "summary",
-  "question",
-  "ready",
-  "recording",
-  "meeting"
-]);
-
-type HighlightGroup = {
-  kind: MeetingDetail["highlights"][number]["kind"];
-  items: Array<MeetingDetail["highlights"][number] & { startMs: number | null }>;
-};
+import { buildMeetingTerms } from "@shared/term-library";
+import type { AppPreferences, MeetingDetail } from "@shared/types";
 
 function escapeRegExp(input: string): string {
   return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function collectDynamicTerms(source: string): string[] {
-  const tokens = source.match(/\b[A-Za-z][A-Za-z0-9.+-]{2,}\b/g) ?? [];
-  const counts = new Map<string, { count: number; sample: string }>();
-
-  for (const token of tokens) {
-    const normalized = token.toLowerCase();
-    if (TOKEN_STOPWORDS.has(normalized)) {
-      continue;
-    }
-    const current = counts.get(normalized);
-    if (current) {
-      current.count += 1;
-    } else {
-      counts.set(normalized, {
-        count: 1,
-        sample: token
-      });
-    }
-  }
-
-  return [...counts.values()]
-    .filter((item) => item.count >= 2 || /[A-Z0-9]/.test(item.sample.slice(1)))
-    .map((item) => item.sample)
-    .slice(0, 8);
-}
-
-export function detectMeetingTerms(detail: MeetingDetail | null): string[] {
+export function detectMeetingTerms(detail: MeetingDetail | null, preferences: AppPreferences): string[] {
   if (!detail) {
     return [];
   }
 
-  const source = [
-    detail.session.title,
-    detail.session.transcriptText,
-    detail.summary?.overview ?? "",
-    ...(detail.summary?.bulletPoints ?? []),
-    ...(detail.summary?.actionItems ?? []),
-    ...(detail.summary?.risks ?? []),
-    ...detail.highlights.map((item) => item.text)
-  ]
-    .join("\n")
-    .trim();
-
-  if (!source) {
-    return [];
-  }
-
-  const candidates = [...KNOWN_TERMS, ...collectDynamicTerms(source)];
-  const unique = new Set<string>();
-
-  for (const term of candidates) {
-    if (!term) {
-      continue;
-    }
-    if (new RegExp(escapeRegExp(term), "i").test(source)) {
-      unique.add(term);
-    }
-    if (unique.size >= 10) {
-      break;
-    }
-  }
-
-  return [...unique];
+  return buildMeetingTerms({
+    title: detail.session.title,
+    transcriptText: detail.session.transcriptText,
+    summary: detail.summary
+      ? {
+          overview: detail.summary.overview,
+          actionItems: detail.summary.actionItems,
+          decisions: detail.summary.decisions,
+          issues: detail.summary.issues
+        }
+      : null,
+    preferences
+  });
 }
 
 export function highlightText(text: string, terms: string[]): ReactNode {
@@ -119,25 +44,4 @@ export function highlightText(text: string, terms: string[]): ReactNode {
       part
     )
   );
-}
-
-export function groupMeetingHighlights(detail: MeetingDetail | null): HighlightGroup[] {
-  if (!detail) {
-    return [];
-  }
-
-  const segmentMap = new Map(detail.transcriptSegments.map((segment) => [segment.id, segment]));
-  const kindOrder: HighlightGroup["kind"][] = ["risk", "action", "decision", "follow-up"];
-
-  return kindOrder
-    .map((kind) => ({
-      kind,
-      items: detail.highlights
-        .filter((item) => item.kind === kind)
-        .map((item) => ({
-          ...item,
-          startMs: segmentMap.get(item.segmentId)?.startMs ?? null
-        }))
-    }))
-    .filter((group) => group.items.length > 0);
 }

@@ -11,6 +11,22 @@ describe("normalizeTranscriptText", () => {
   it("collapses repeated clauses", () => {
     expect(normalizeTranscriptText("我们今天先过需求。我们今天先过需求。")).toBe("我们今天先过需求。");
   });
+
+  it("applies custom term normalization when enabled", () => {
+    expect(
+      normalizeTranscriptText("今天继续讲 aimeeting 和 coze 的接入", {
+        customTermLibraryEnabled: true,
+        customTerms: [
+          {
+            id: "coze",
+            canonical: "Coze",
+            aliases: ["coze"],
+            enabled: true
+          }
+        ]
+      })
+    ).toBe("今天继续讲 AI Meeting 和 Coze 的接入");
+  });
 });
 
 describe("stitchTranscript", () => {

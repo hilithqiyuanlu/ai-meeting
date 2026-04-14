@@ -1,17 +1,18 @@
 import { useEffect, useMemo, useState } from "react";
-import type { WheelEvent } from "react";
 import type {
   AppPreferences,
   BootstrapState,
+  CustomTermEntry,
   EnvironmentStatus,
   LocalAsrStatus,
   MeetingDetail,
   MeetingSession,
   ProviderConfig,
   RecordingSnapshot,
+  StructuredActionItem,
   UiLanguage
 } from "@shared/types";
-import { detectMeetingTerms, groupMeetingHighlights, highlightText } from "./meeting-display";
+import { detectMeetingTerms, highlightText } from "./meeting-display";
 
 type TabId = "capture" | "settings";
 
@@ -47,7 +48,6 @@ const copy = {
     saving: "保存中...",
     finishGuide: "引导完成，返回工作台",
     transcript: "实时字幕流",
-    highlights: "重点提醒",
     summary: "会议纪要",
     controls: "录制控制",
     askPlaceholder: "继续追问这场会议，例如：老师提出的具体要求是什么？",
@@ -59,12 +59,11 @@ const copy = {
     selectMeeting: "先从左侧选择一场会议。",
     chooseMeeting: "选择一场会议",
     transcriptEmpty: "中间区域会展示当前会议的转写全文与片段状态。",
-    noHighlights: "当前还没有满足保守阈值的提醒。系统只会在高置信度、非重叠片段上提示重点。",
     processingSummary: "AI 正在根据全文整理纪要，请稍候。",
     qa: "会议问答",
-    keyPoints: "关键结论",
-    actionItems: "待办事项",
-    risks: "风险与待确认",
+    keyPoints: "决策",
+    actionItems: "行动项",
+    risks: "问题",
     history: "历史会议",
     noHistory: "暂无会议记录",
     startMeetingHint: "开始一场新会议后，记录会出现在这里。",
@@ -244,7 +243,23 @@ const copy = {
     totalLowQualitySegments: "低质量累计",
     stitchSuppressed: "去重压制",
     processingNote: "当前仅实现启发式音频前处理，不包含系统级 voice processing。",
-    preferredBackend: "推荐后端"
+    preferredBackend: "推荐后端",
+    termLibrary: "术语/热词库",
+    enableCustomTerms: "启用自定义术语库",
+    termLibraryNote: "术语标准化会同时使用内置词库和你启用的自定义词条；别名每行一个。",
+    termCanonical: "标准写法",
+    termAliases: "别名",
+    termAliasesHint: "每行一个别名，例如：AIMeeting",
+    addTerm: "新增词条",
+    removeTerm: "删除词条",
+    noCustomTerms: "还没有自定义词条。",
+    termEntryEnabled: "启用此词条",
+    actionOwner: "负责人",
+    actionDue: "截止时间",
+    actionOwnerUnknown: "未明确",
+    actionDueUnknown: "未明确",
+    noDecisions: "暂无明确决策。",
+    noIssues: "暂无待确认问题。"
   },
   "en-US": {
     loading: "Loading workspace...",
@@ -277,7 +292,6 @@ const copy = {
     saving: "Saving...",
     finishGuide: "Finish onboarding",
     transcript: "Realtime Transcript",
-    highlights: "Highlights",
     summary: "Meeting Summary",
     controls: "Recording Controls",
     askPlaceholder: "Ask a follow-up question about this meeting...",
@@ -289,12 +303,11 @@ const copy = {
     selectMeeting: "Choose a meeting from the left.",
     chooseMeeting: "Choose a meeting",
     transcriptEmpty: "The center area shows transcript segments and status.",
-    noHighlights: "No conservative high-confidence highlights yet.",
     processingSummary: "AI is organizing the full transcript, please wait.",
     qa: "Meeting Q&A",
-    keyPoints: "Key Points",
+    keyPoints: "Decisions",
     actionItems: "Action Items",
-    risks: "Risks & Follow-ups",
+    risks: "Issues",
     history: "History",
     noHistory: "No meetings yet",
     startMeetingHint: "Your meetings will appear here after you start one.",
@@ -474,7 +487,23 @@ const copy = {
     totalLowQualitySegments: "Low-quality Total",
     stitchSuppressed: "Dedupe Suppressed",
     processingNote: "Only heuristic audio preprocessing is implemented in v0.4.4. System voice processing is not wired in.",
-    preferredBackend: "Preferred Backend"
+    preferredBackend: "Preferred Backend",
+    termLibrary: "Term Library",
+    enableCustomTerms: "Enable custom term library",
+    termLibraryNote: "Normalization uses built-in terms plus enabled custom entries. Put one alias per line.",
+    termCanonical: "Canonical",
+    termAliases: "Aliases",
+    termAliasesHint: "One alias per line, for example: AIMeeting",
+    addTerm: "Add Term",
+    removeTerm: "Remove",
+    noCustomTerms: "No custom terms yet.",
+    termEntryEnabled: "Enable this term",
+    actionOwner: "Owner",
+    actionDue: "Due",
+    actionOwnerUnknown: "Unspecified",
+    actionDueUnknown: "Unspecified",
+    noDecisions: "No confirmed decisions yet.",
+    noIssues: "No open issues yet."
   }
 } as const;
 
@@ -611,25 +640,24 @@ function audioIssueLabel(issue: MeetingDetail["transcriptSegments"][number]["aud
   }
 }
 
-function audioProcessingBackendLabel(backend: RecordingSnapshot["audioProcessingBackend"], language: UiLanguage): string {
-  return backend === "heuristic-apm" ? t(language, "backendHeuristic") : t(language, "backendNone");
+function customTermAliasesText(entry: CustomTermEntry): string {
+  return entry.aliases.join("\n");
 }
 
-function audioProcessingStateLabel(active: boolean, language: UiLanguage): string {
-  return active ? t(language, "processingActive") : t(language, "processingInactive");
+function createCustomTermEntry(): CustomTermEntry {
+  return {
+    id: typeof crypto !== "undefined" && "randomUUID" in crypto ? crypto.randomUUID() : `custom-term-${Date.now()}`,
+    canonical: "",
+    aliases: [],
+    enabled: true
+  };
 }
 
-function highlightKindLabel(kind: MeetingDetail["highlights"][number]["kind"], language: UiLanguage): string {
-  switch (kind) {
-    case "decision":
-      return t(language, "highlightDecision");
-    case "action":
-      return t(language, "highlightAction");
-    case "risk":
-      return t(language, "highlightRisk");
-    default:
-      return t(language, "highlightFollowUp");
-  }
+function formatActionItemMeta(item: StructuredActionItem, language: UiLanguage): string {
+  return [
+    `${t(language, "actionOwner")}: ${item.owner ?? t(language, "actionOwnerUnknown")}`,
+    `${t(language, "actionDue")}: ${item.due ?? t(language, "actionDueUnknown")}`
+  ].join(" · ");
 }
 
 function formatLatency(latencyMs: number | null): string {
@@ -637,20 +665,6 @@ function formatLatency(latencyMs: number | null): string {
     return "--";
   }
   return `${latencyMs} ms`;
-}
-
-function formatCueTime(startMs: number | null): string {
-  if (startMs === null) {
-    return "--";
-  }
-
-  if (startMs < 60_000) {
-    return `${Math.round(startMs / 100) / 10}s`;
-  }
-
-  const minutes = Math.floor(startMs / 60_000);
-  const seconds = Math.floor((startMs % 60_000) / 1000);
-  return `${minutes}:${String(seconds).padStart(2, "0")}`;
 }
 
 function summarySourceSegment(detail: MeetingDetail | null): number {
@@ -858,11 +872,6 @@ export function App() {
         void loadDetail(payload.sessionId);
       }
     });
-    const offHighlight = window.appApi.onEvent("highlight-added", (payload) => {
-      if (payload.sessionId === selectedSessionId) {
-        void loadDetail(payload.sessionId);
-      }
-    });
     const offLocalModel = window.appApi.onEvent("local-model-updated", (payload: LocalAsrStatus) => {
       setBootstrap((current) =>
         current
@@ -887,7 +896,6 @@ export function App() {
       offRecording();
       offSession();
       offSummary();
-      offHighlight();
       offLocalModel();
       offError();
     };
@@ -914,7 +922,12 @@ export function App() {
     }
     return getPreferredDevice(bootstrap.environment, preferenceDraft ?? bootstrap.preferences, (preferenceDraft ?? bootstrap.preferences).captureMode)?.id ?? "";
   }, [bootstrap, preferenceDraft]);
-  const meetingTerms = useMemo(() => detectMeetingTerms(detail), [detail]);
+  const meetingTerms = useMemo(() => {
+    if (!preferenceDraft) {
+      return [];
+    }
+    return detectMeetingTerms(detail, preferenceDraft);
+  }, [detail, preferenceDraft]);
   const uiLanguage = preferenceDraft?.uiLanguage ?? "zh-CN";
 
   if (loading) {
@@ -1267,7 +1280,6 @@ export function App() {
                     selectedDeviceId={selectedDeviceId}
                     language={uiLanguage}
                   />
-                  <HighlightsPanel detail={detail} compact meetingTerms={meetingTerms} language={uiLanguage} />
                   <TranscriptPanel detail={detail} meetingTerms={meetingTerms} language={uiLanguage} />
                 </>
               ) : (
@@ -1366,6 +1378,32 @@ function CapturePanel(props: {
       value: transcriptQualityLabel(props.recording.inputQuality, props.language)
     }
   ];
+  const expandedMetricItems = [
+    {
+      label: t(props.language, "statusLabel"),
+      value: recordingStatusLabel(props.recording, props.language)
+    },
+    {
+      label: t(props.language, "inputStatusLabel"),
+      value: audioStateLabel(props.recording.audioState, props.language)
+    },
+    {
+      label: t(props.language, "realtimeLatency"),
+      value: formatLatency(props.recording.currentLatencyMs)
+    },
+    {
+      label: t(props.language, "inputQuality"),
+      value: transcriptQualityLabel(props.recording.inputQuality, props.language)
+    },
+    {
+      label: t(props.language, "lastAudio"),
+      value: formatRelativeStatus(props.recording.lastAudioAt, props.language)
+    },
+    {
+      label: t(props.language, "lastTranscript"),
+      value: formatRelativeStatus(props.recording.lastTranscriptAt, props.language)
+    }
+  ];
 
   return (
     <section className={statusExpanded ? "accordion-card open capture-status-card" : "accordion-card capture-status-card"}>
@@ -1396,84 +1434,29 @@ function CapturePanel(props: {
       {statusExpanded ? (
         <div className="accordion-content">
           <div className="metrics-grid">
-            <article className="metric-card">
-              <span>{t(props.language, "statusLabel")}</span>
-              <strong>{recordingStatusLabel(props.recording, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "inputStatusLabel")}</span>
-              <strong>{audioStateLabel(props.recording.audioState, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "realtimeLatency")}</span>
-              <strong>{formatLatency(props.recording.currentLatencyMs)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "inputQuality")}</span>
-              <strong>{transcriptQualityLabel(props.recording.inputQuality, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "audioBackend")}</span>
-              <strong>{audioProcessingBackendLabel(props.recording.audioProcessingBackend, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "processingStatus")}</span>
-              <strong>{audioProcessingStateLabel(props.recording.voiceProcessingActive, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "lastAudio")}</span>
-              <strong>{formatRelativeStatus(props.recording.lastAudioAt, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "lastTranscript")}</span>
-              <strong>{formatRelativeStatus(props.recording.lastTranscriptAt, props.language)}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "riskSegments")}</span>
-              <strong>
-                {t(props.language, "lowQualityShort")} {props.recording.consecutiveLowQualitySegments} / {t(props.language, "failedShort")}{" "}
-                {props.recording.failedSegments}
-              </strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "vadTriggers")}</span>
-              <strong>{props.recording.vadTriggerCount}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "skippedSilence")}</span>
-              <strong>{props.recording.skippedSilenceSegments}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "totalLowQualitySegments")}</span>
-              <strong>{props.recording.lowQualitySegments}</strong>
-            </article>
-            <article className="metric-card">
-              <span>{t(props.language, "stitchSuppressed")}</span>
-              <strong>{props.recording.stitchSuppressedSegments}</strong>
-            </article>
+            {expandedMetricItems.map((item) => (
+              <article key={item.label} className="metric-card">
+                <span>{item.label}</span>
+                <strong>{item.value}</strong>
+              </article>
+            ))}
           </div>
 
           <div className="level-card level-card-inline">
             <div className="section-head">
               <div>
                 <h4>{t(props.language, "liveLevel")}</h4>
-                <p className="muted">
-                  {latencyModeLabel(props.recording.latencyMode, props.language)} · {audioStateLabel(props.recording.audioState, props.language)} ·{" "}
-                  {audioProcessingBackendLabel(props.recording.audioProcessingBackend, props.language)}
-                </p>
+                <p className="muted">{latencyModeLabel(props.recording.latencyMode, props.language)} · {audioStateLabel(props.recording.audioState, props.language)}</p>
               </div>
-            </div>
-            <div className="level-track">
-              <div className="level-fill" style={{ width: `${audioLevelPercent(props.recording.inputLevel)}%` }}></div>
             </div>
             <div className="level-track">
               <div className="level-fill" style={{ width: `${audioLevelPercent(props.recording.processedInputLevel)}%` }}></div>
             </div>
             <p className="level-readout mono-text">
-              {t(props.language, "rawInputLevel")} {Math.round(props.recording.inputLevel * 1000) / 1000} | {t(props.language, "processedInputLevel")}{" "}
+              {t(props.language, "processedInputLevel")}{" "}
               {Math.round(props.recording.processedInputLevel * 1000) / 1000}
             </p>
-            <p>{props.recording.partialText || t(props.language, "partialFallback")}</p>
+            <p className="capture-note">{props.recording.partialText || t(props.language, "partialFallback")}</p>
             {props.recording.lastAudioIssues.length > 0 ? (
               <div className="tag-row">
                 {props.recording.lastAudioIssues.map((issue) => (
@@ -1630,6 +1613,33 @@ function SettingsPanel(props: {
   const { providerDraft, preferenceDraft, environment } = props;
   const localAsrSelected = providerDraft.asr.providerId === "sensevoice-local";
   const localLlmSelected = providerDraft.llm.providerId === "ollama-local";
+  const updateCustomTerm = (termId: string, patch: Partial<CustomTermEntry>): void => {
+    props.onPreferenceChange({
+      ...preferenceDraft,
+      customTerms: preferenceDraft.customTerms.map((item) =>
+        item.id === termId
+          ? {
+              ...item,
+              ...patch
+            }
+          : item
+      )
+    });
+  };
+
+  const appendCustomTerm = (): void => {
+    props.onPreferenceChange({
+      ...preferenceDraft,
+      customTerms: [...preferenceDraft.customTerms, createCustomTermEntry()]
+    });
+  };
+
+  const removeCustomTerm = (termId: string): void => {
+    props.onPreferenceChange({
+      ...preferenceDraft,
+      customTerms: preferenceDraft.customTerms.filter((item) => item.id !== termId)
+    });
+  };
 
   return (
     <div className="stack">
@@ -1638,570 +1648,525 @@ function SettingsPanel(props: {
       </section>
 
       <div className="settings-grid">
-        <div className="settings-card">
-          <div className="settings-card-head">
-            <h4>{t(props.language, "general")}</h4>
+        <div className="settings-main-column">
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h4>{t(props.language, "general")}</h4>
+            </div>
+            <label className="form-field">
+              <span>{t(props.language, "language")}</span>
+              <select
+                value={props.preferenceDraft.uiLanguage}
+                onChange={(event) =>
+                  props.onPreferenceChange({
+                    ...props.preferenceDraft,
+                    uiLanguage: event.target.value as UiLanguage
+                  })
+                }
+              >
+                <option value="zh-CN">{t(props.language, "languageZh")}</option>
+                <option value="en-US">{t(props.language, "languageEn")}</option>
+              </select>
+            </label>
           </div>
-          <label className="form-field">
-            <span>{t(props.language, "language")}</span>
-            <select
-              value={props.preferenceDraft.uiLanguage}
-              onChange={(event) =>
-                props.onPreferenceChange({
-                  ...props.preferenceDraft,
-                  uiLanguage: event.target.value as UiLanguage
-                })
-              }
-            >
-              <option value="zh-CN">{t(props.language, "languageZh")}</option>
-              <option value="en-US">{t(props.language, "languageEn")}</option>
-            </select>
-          </label>
-        </div>
 
-        <div className="settings-card">
-          <div className="settings-card-head">
-            <h4>{t(props.language, "capture")}</h4>
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h4>{t(props.language, "capture")}</h4>
+            </div>
+            <div className="capture-mode-grid">
+              <button
+                className={preferenceDraft.captureMode === "microphone" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onPreferenceChange({
+                    ...preferenceDraft,
+                    captureMode: "microphone"
+                  })
+                }
+              >
+                {t(props.language, "microphoneMode")}
+              </button>
+              <button
+                className={preferenceDraft.captureMode === "system-audio" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onPreferenceChange({
+                    ...preferenceDraft,
+                    captureMode: "system-audio"
+                  })
+                }
+              >
+                {t(props.language, "systemAudioMode")}
+              </button>
+            </div>
           </div>
-          <div className="capture-mode-grid">
-            <button
-              className={preferenceDraft.captureMode === "microphone" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onPreferenceChange({
-                  ...preferenceDraft,
-                  captureMode: "microphone"
-                })
-              }
-            >
-              {t(props.language, "microphoneMode")}
-            </button>
-            <button
-              className={preferenceDraft.captureMode === "system-audio" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onPreferenceChange({
-                  ...preferenceDraft,
-                  captureMode: "system-audio"
-                })
-              }
-            >
-              {t(props.language, "systemAudioMode")}
-            </button>
-          </div>
-        </div>
 
-        <div className="settings-card">
-          <div className="settings-card-head">
-            <h4>{t(props.language, "asr")}</h4>
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h4>{t(props.language, "asr")}</h4>
+            </div>
+            <div className="capture-mode-grid">
+              <button
+                className={providerDraft.asr.providerId === "gemini-openai-audio" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    asr: { ...providerDraft.asr, providerId: "gemini-openai-audio", runtime: "cloud" }
+                  })
+                }
+              >
+                Gemini
+              </button>
+              <button
+                className={providerDraft.asr.providerId === "openai-compatible-asr" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    asr: { ...providerDraft.asr, providerId: "openai-compatible-asr", runtime: "cloud" }
+                  })
+                }
+              >
+                OpenAI-compatible
+              </button>
+              <button
+                className={localAsrSelected ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    asr: {
+                      ...providerDraft.asr,
+                      providerId: "sensevoice-local",
+                      runtime: "sherpa-onnx",
+                      chunkMs: providerDraft.asr.chunkMs || 8000
+                    }
+                  })
+                }
+              >
+                {t(props.language, "localSenseVoice")}
+              </button>
+            </div>
+            {localAsrSelected ? (
+              <>
+                <div className="guide-grid">
+                  <div className="guide-card">
+                    <span className="guide-label">{t(props.language, "modelState")}</span>
+                    <strong className="mono-text">
+                      {modelStateLabel(environment.localModelState, props.language)}
+                      {environment.localModelDownloadProgress !== null ? ` ${environment.localModelDownloadProgress}%` : ""}
+                    </strong>
+                  </div>
+                  <div className="guide-card">
+                    <span className="guide-label">{t(props.language, "runtimeLabel")}</span>
+                    <strong className="mono-text">sherpa-onnx</strong>
+                  </div>
+                </div>
+                <label className="form-field">
+                  <span>{t(props.language, "recognitionLanguage")}</span>
+                  <select
+                    value={providerDraft.asr.localLanguage}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: {
+                          ...providerDraft.asr,
+                          localLanguage: event.target.value as ProviderConfig["asr"]["localLanguage"]
+                        }
+                      })
+                    }
+                  >
+                    <option value="auto">{t(props.language, "languageAuto")}</option>
+                    <option value="zh">{t(props.language, "languageMandarin")}</option>
+                    <option value="yue">{t(props.language, "languageCantonese")}</option>
+                    <option value="en">{t(props.language, "languageEnglish")}</option>
+                    <option value="ja">{t(props.language, "languageJapanese")}</option>
+                    <option value="ko">{t(props.language, "languageKorean")}</option>
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>{t(props.language, "latencyStrategy")}</span>
+                  <select
+                    value={providerDraft.asr.latencyMode}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: {
+                          ...providerDraft.asr,
+                          latencyMode: event.target.value as ProviderConfig["asr"]["latencyMode"]
+                        }
+                      })
+                    }
+                  >
+                    <option value="fast">{t(props.language, "fast")}</option>
+                    <option value="balanced">{t(props.language, "balanced")}</option>
+                    <option value="accurate">{t(props.language, "accurate")}</option>
+                  </select>
+                </label>
+                <label className="form-field">
+                  <span>{t(props.language, "chunkFallback")}</span>
+                  <input
+                    type="number"
+                    min={4000}
+                    step={1000}
+                    value={providerDraft.asr.chunkMs}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: {
+                          ...providerDraft.asr,
+                          chunkMs: Number(event.target.value) || 8000
+                        }
+                      })
+                    }
+                  />
+                </label>
+                <div className="guide-grid">
+                  <div className="guide-card">
+                    <span className="guide-label">{t(props.language, "vad")}</span>
+                    <strong>{providerDraft.asr.vadEnabled ? t(props.language, "enabled") : t(props.language, "disabled")}</strong>
+                  </div>
+                  <div className="guide-card">
+                    <span className="guide-label">{t(props.language, "overlapDetection")}</span>
+                    <strong>{providerDraft.asr.overlapDetectionEnabled ? t(props.language, "enabled") : t(props.language, "disabled")}</strong>
+                  </div>
+                </div>
+                <div className="settings-inline-toggles">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={providerDraft.asr.vadEnabled}
+                      onChange={(event) =>
+                        props.onProviderChange({
+                          ...providerDraft,
+                          asr: {
+                            ...providerDraft.asr,
+                            vadEnabled: event.target.checked
+                          }
+                        })
+                      }
+                    />
+                    <span>{t(props.language, "enableVad")}</span>
+                  </label>
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={providerDraft.asr.overlapDetectionEnabled}
+                      onChange={(event) =>
+                        props.onProviderChange({
+                          ...providerDraft,
+                          asr: {
+                            ...providerDraft.asr,
+                            overlapDetectionEnabled: event.target.checked
+                          }
+                        })
+                      }
+                    />
+                    <span>{t(props.language, "enableOverlapDetection")}</span>
+                  </label>
+                </div>
+                <p className="muted">{t(props.language, "processingNote")}</p>
+                <div className="settings-inline-actions">
+                  <button
+                    type="button"
+                    disabled={environment.localModelState === "downloading"}
+                    onClick={props.onDownloadLocalModel}
+                  >
+                    {environment.localModelState === "ready"
+                      ? t(props.language, "redownloadModel")
+                      : environment.localModelState === "downloading"
+                        ? t(props.language, "downloadingModel")
+                        : t(props.language, "downloadModel")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={environment.localModelState === "downloading" || environment.localModelState === "not-downloaded"}
+                    onClick={props.onDeleteLocalModel}
+                  >
+                    {t(props.language, "deleteModel")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={environment.localModelState === "downloading"}
+                    onClick={props.onImportLocalModelDir}
+                  >
+                    {t(props.language, "importModelDir")}
+                  </button>
+                </div>
+              </>
+            ) : (
+              <>
+                <label className="form-field">
+                  <span>{t(props.language, "endpoint")}</span>
+                  <input
+                    value={providerDraft.asr.endpoint}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: { ...providerDraft.asr, endpoint: event.target.value }
+                      })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>{t(props.language, "apiKey")}</span>
+                  <input
+                    type="password"
+                    value={providerDraft.asr.apiKey}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: { ...providerDraft.asr, apiKey: event.target.value }
+                      })
+                    }
+                  />
+                </label>
+                <label className="form-field">
+                  <span>{t(props.language, "model")}</span>
+                  <input
+                    value={providerDraft.asr.model}
+                    onChange={(event) =>
+                      props.onProviderChange({
+                        ...providerDraft,
+                        asr: { ...providerDraft.asr, model: event.target.value }
+                      })
+                    }
+                  />
+                </label>
+              </>
+            )}
           </div>
-          <div className="capture-mode-grid">
-            <button
-              className={providerDraft.asr.providerId === "gemini-openai-audio" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  asr: { ...providerDraft.asr, providerId: "gemini-openai-audio", runtime: "cloud" }
-                })
-              }
-            >
-              Gemini
-            </button>
-            <button
-              className={providerDraft.asr.providerId === "openai-compatible-asr" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  asr: { ...providerDraft.asr, providerId: "openai-compatible-asr", runtime: "cloud" }
-                })
-              }
-            >
-              OpenAI-compatible
-            </button>
-            <button
-              className={localAsrSelected ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  asr: {
-                    ...providerDraft.asr,
-                    providerId: "sensevoice-local",
-                    runtime: "sherpa-onnx",
-                    chunkMs: providerDraft.asr.chunkMs || 8000
-                  }
-                })
-              }
-            >
-              {t(props.language, "localSenseVoice")}
-            </button>
-          </div>
-          {localAsrSelected ? (
-            <>
-              <div className="guide-grid">
-                <div className="guide-card">
-                  <span className="guide-label">{t(props.language, "modelState")}</span>
-                  <strong className="mono-text">
-                    {modelStateLabel(environment.localModelState, props.language)}
-                    {environment.localModelDownloadProgress !== null ? ` ${environment.localModelDownloadProgress}%` : ""}
-                  </strong>
-                </div>
-                <div className="guide-card">
-                  <span className="guide-label">{t(props.language, "runtimeLabel")}</span>
-                  <strong className="mono-text">sherpa-onnx</strong>
-                </div>
-                <div className="guide-card">
-                  <span className="guide-label">{t(props.language, "audioBackend")}</span>
-                  <strong className="mono-text">{audioProcessingBackendLabel(providerDraft.asr.audioProcessingBackend, props.language)}</strong>
-                </div>
-                <div className="guide-card">
-                  <span className="guide-label">{t(props.language, "preferredBackend")}</span>
-                  <strong className="mono-text">{audioProcessingBackendLabel(environment.preferredAudioProcessingBackend, props.language)}</strong>
-                </div>
-              </div>
-              <label className="form-field">
-                <span>{t(props.language, "recognitionLanguage")}</span>
-                <select
-                  value={providerDraft.asr.localLanguage}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        localLanguage: event.target.value as ProviderConfig["asr"]["localLanguage"]
-                      }
-                    })
-                  }
-                >
-                  <option value="auto">{t(props.language, "languageAuto")}</option>
-                  <option value="zh">{t(props.language, "languageMandarin")}</option>
-                  <option value="yue">{t(props.language, "languageCantonese")}</option>
-                  <option value="en">{t(props.language, "languageEnglish")}</option>
-                  <option value="ja">{t(props.language, "languageJapanese")}</option>
-                  <option value="ko">{t(props.language, "languageKorean")}</option>
-                </select>
-              </label>
-              <label className="form-field">
-                <span>{t(props.language, "latencyStrategy")}</span>
-                <select
-                  value={providerDraft.asr.latencyMode}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        latencyMode: event.target.value as ProviderConfig["asr"]["latencyMode"]
-                      }
-                    })
-                  }
-                >
-                  <option value="fast">{t(props.language, "fast")}</option>
-                  <option value="balanced">{t(props.language, "balanced")}</option>
-                  <option value="accurate">{t(props.language, "accurate")}</option>
-                </select>
-              </label>
-              <label className="form-field">
-                <span>{t(props.language, "chunkFallback")}</span>
-                <input
-                  type="number"
-                  min={4000}
-                  step={1000}
-                  value={providerDraft.asr.chunkMs}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        chunkMs: Number(event.target.value) || 8000
-                      }
-                    })
-                  }
-                />
-              </label>
-              <div className="guide-grid">
-                <div className="guide-card">
-                  <span className="guide-label">{t(props.language, "vad")}</span>
-                  <strong>{providerDraft.asr.vadEnabled ? t(props.language, "enabled") : t(props.language, "disabled")}</strong>
-                </div>
-                <div className="guide-card">
-                  <span className="guide-label">{t(props.language, "overlapDetection")}</span>
-                  <strong>{providerDraft.asr.overlapDetectionEnabled ? t(props.language, "enabled") : t(props.language, "disabled")}</strong>
-                </div>
-              </div>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={providerDraft.asr.vadEnabled}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        vadEnabled: event.target.checked
-                      }
-                    })
-                  }
-                />
-                <span>{t(props.language, "enableVad")}</span>
-              </label>
-              <label className="checkbox-row">
-                <input
-                  type="checkbox"
-                  checked={providerDraft.asr.overlapDetectionEnabled}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        overlapDetectionEnabled: event.target.checked
-                      }
-                    })
-                  }
-                />
-                <span>{t(props.language, "enableOverlapDetection")}</span>
-              </label>
-              <label className="form-field">
-                <span>{t(props.language, "vadThreshold")}</span>
-                <input
-                  type="number"
-                  min={0.005}
-                  max={0.08}
-                  step={0.001}
-                  value={providerDraft.asr.vadThreshold}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        vadThreshold: Number(event.target.value) || 0.014
-                      }
-                    })
-                  }
-                />
-              </label>
-              <label className="form-field">
-                <span>{t(props.language, "tailBuffer")}</span>
-                <input
-                  type="number"
-                  min={120}
-                  step={60}
-                  value={providerDraft.asr.vadPostRollMs}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        vadPostRollMs: Number(event.target.value) || 420
-                      }
-                    })
-                  }
-                />
-              </label>
-              <div className="guide-grid">
-                <div className="guide-card">
-                  <span className="guide-label">AEC</span>
-                  <strong className="mono-text">{providerDraft.asr.aecMode}</strong>
-                </div>
-                <div className="guide-card">
-                  <span className="guide-label">NS / AGC</span>
-                  <strong className="mono-text">
-                    {providerDraft.asr.noiseSuppressionMode} / {providerDraft.asr.autoGainMode}
-                  </strong>
-                </div>
-              </div>
-              <label className="form-field">
-                <span>{t(props.language, "aecStrategy")}</span>
-                <select
-                  value={providerDraft.asr.aecMode}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        aecMode: event.target.value as ProviderConfig["asr"]["aecMode"]
-                      }
-                    })
-                  }
-                >
-                  <option value="auto">{t(props.language, "auto")}</option>
-                  <option value="on">{t(props.language, "forceOn")}</option>
-                  <option value="off">{t(props.language, "off")}</option>
-                </select>
-              </label>
-              <label className="form-field">
-                <span>{t(props.language, "noiseSuppression")}</span>
-                <select
-                  value={providerDraft.asr.noiseSuppressionMode}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        noiseSuppressionMode: event.target.value as ProviderConfig["asr"]["noiseSuppressionMode"]
-                      }
-                    })
-                  }
-                >
-                  <option value="auto">{t(props.language, "auto")}</option>
-                  <option value="on">{t(props.language, "on")}</option>
-                  <option value="off">{t(props.language, "off")}</option>
-                </select>
-              </label>
-              <label className="form-field">
-                <span>{t(props.language, "autoGain")}</span>
-                <select
-                  value={providerDraft.asr.autoGainMode}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: {
-                        ...providerDraft.asr,
-                        autoGainMode: event.target.value as ProviderConfig["asr"]["autoGainMode"]
-                      }
-                    })
-                  }
-                >
-                  <option value="auto">{t(props.language, "auto")}</option>
-                  <option value="on">{t(props.language, "on")}</option>
-                  <option value="off">{t(props.language, "off")}</option>
-                </select>
-              </label>
-              <p className="muted">{t(props.language, "processingNote")}</p>
-              <p className="muted">{t(props.language, "modelPath")}：{environment.localModelStoragePath ?? t(props.language, "none")}</p>
-              {environment.localModelErrorMessage ? <p className="error-text">{t(props.language, "modelError")}：{environment.localModelErrorMessage}</p> : null}
-              <div className="control-grid">
-                <button
-                  type="button"
-                  disabled={environment.localModelState === "downloading"}
-                  onClick={props.onDownloadLocalModel}
-                >
-                  {environment.localModelState === "ready"
-                    ? t(props.language, "redownloadModel")
-                    : environment.localModelState === "downloading"
-                      ? t(props.language, "downloadingModel")
-                      : t(props.language, "downloadModel")}
-                </button>
-                <button
-                  type="button"
-                  disabled={environment.localModelState === "downloading" || environment.localModelState === "not-downloaded"}
-                  onClick={props.onDeleteLocalModel}
-                >
-                  {t(props.language, "deleteModel")}
-                </button>
-                <button
-                  type="button"
-                  disabled={environment.localModelState === "downloading"}
-                  onClick={props.onImportLocalModelDir}
-                >
-                  {t(props.language, "importModelDir")}
-                </button>
-              </div>
-            </>
-          ) : (
-            <>
-              <label className="form-field">
-                <span>{t(props.language, "endpoint")}</span>
-                <input
-                  value={providerDraft.asr.endpoint}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: { ...providerDraft.asr, endpoint: event.target.value }
-                    })
-                  }
-                />
-              </label>
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h4>{t(props.language, "llm")}</h4>
+            </div>
+            <div className="capture-mode-grid">
+              <button
+                className={providerDraft.llm.providerId === "gemini-openai-compatible" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    llm: {
+                      ...providerDraft.llm,
+                      providerId: "gemini-openai-compatible",
+                      baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
+                      model: providerDraft.llm.model === "qwen3.5:4b" ? "gemini-2.5-flash" : providerDraft.llm.model
+                    }
+                  })
+                }
+              >
+                Gemini
+              </button>
+              <button
+                className={providerDraft.llm.providerId === "openai-compatible-llm" ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    llm: {
+                      ...providerDraft.llm,
+                      providerId: "openai-compatible-llm"
+                    }
+                  })
+                }
+              >
+                OpenAI-compatible
+              </button>
+              <button
+                className={localLlmSelected ? "nav-item active" : "nav-item"}
+                type="button"
+                onClick={() =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    llm: {
+                      ...providerDraft.llm,
+                      providerId: "ollama-local",
+                      baseUrl: "http://127.0.0.1:11434",
+                      apiKey: "ollama",
+                      model: "qwen3.5:4b"
+                    }
+                  })
+                }
+              >
+                {t(props.language, "localOllama")}
+              </button>
+            </div>
+            <label className="form-field">
+              <span>{localLlmSelected ? "Ollama URL" : "Base URL"}</span>
+              <input
+                value={providerDraft.llm.baseUrl}
+                onChange={(event) =>
+                  props.onProviderChange({
+                    ...providerDraft,
+                    llm: { ...providerDraft.llm, baseUrl: event.target.value }
+                  })
+                }
+              />
+            </label>
+            {!localLlmSelected ? (
               <label className="form-field">
                 <span>{t(props.language, "apiKey")}</span>
                 <input
                   type="password"
-                  value={providerDraft.asr.apiKey}
+                  value={providerDraft.llm.apiKey}
                   onChange={(event) =>
                     props.onProviderChange({
                       ...providerDraft,
-                      asr: { ...providerDraft.asr, apiKey: event.target.value }
+                      llm: { ...providerDraft.llm, apiKey: event.target.value }
                     })
                   }
                 />
               </label>
-              <label className="form-field">
-                <span>{t(props.language, "model")}</span>
-                <input
-                  value={providerDraft.asr.model}
-                  onChange={(event) =>
-                    props.onProviderChange({
-                      ...providerDraft,
-                      asr: { ...providerDraft.asr, model: event.target.value }
-                    })
-                  }
-                />
-              </label>
-            </>
-          )}
-        </div>
-
-        <div className="settings-card">
-          <div className="settings-card-head">
-            <h4>{t(props.language, "llm")}</h4>
-          </div>
-          <div className="capture-mode-grid">
-            <button
-              className={providerDraft.llm.providerId === "gemini-openai-compatible" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  llm: {
-                    ...providerDraft.llm,
-                    providerId: "gemini-openai-compatible",
-                    baseUrl: "https://generativelanguage.googleapis.com/v1beta/openai",
-                    model: providerDraft.llm.model === "qwen3.5:4b" ? "gemini-2.5-flash" : providerDraft.llm.model
-                  }
-                })
-              }
-            >
-              Gemini
-            </button>
-            <button
-              className={providerDraft.llm.providerId === "openai-compatible-llm" ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  llm: {
-                    ...providerDraft.llm,
-                    providerId: "openai-compatible-llm"
-                  }
-                })
-              }
-            >
-              OpenAI-compatible
-            </button>
-            <button
-              className={localLlmSelected ? "nav-item active" : "nav-item"}
-              type="button"
-              onClick={() =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  llm: {
-                    ...providerDraft.llm,
-                    providerId: "ollama-local",
-                    baseUrl: "http://127.0.0.1:11434",
-                    apiKey: "ollama",
-                    model: "qwen3.5:4b"
-                  }
-                })
-              }
-            >
-              {t(props.language, "localOllama")}
-            </button>
-          </div>
-          <label className="form-field">
-            <span>{localLlmSelected ? "Ollama URL" : "Base URL"}</span>
-            <input
-              value={providerDraft.llm.baseUrl}
-              onChange={(event) =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  llm: { ...providerDraft.llm, baseUrl: event.target.value }
-                })
-              }
-            />
-          </label>
-          {!localLlmSelected ? (
+            ) : null}
             <label className="form-field">
-              <span>{t(props.language, "apiKey")}</span>
+              <span>{t(props.language, "model")}</span>
               <input
-                type="password"
-                value={providerDraft.llm.apiKey}
+                value={providerDraft.llm.model}
                 onChange={(event) =>
                   props.onProviderChange({
                     ...providerDraft,
-                    llm: { ...providerDraft.llm, apiKey: event.target.value }
+                    llm: { ...providerDraft.llm, model: event.target.value }
                   })
                 }
               />
             </label>
-          ) : null}
-          <label className="form-field">
-            <span>{t(props.language, "model")}</span>
-            <input
-              value={providerDraft.llm.model}
-              onChange={(event) =>
-                props.onProviderChange({
-                  ...providerDraft,
-                  llm: { ...providerDraft.llm, model: event.target.value }
-                })
-              }
-            />
-          </label>
+          </div>
         </div>
 
-        <div className="settings-card settings-card-wide">
-          <div className="settings-card-head">
-            <h4>{t(props.language, "workspacePrefs")}</h4>
-          </div>
-
-          <div className="preference-list">
+        <div className="settings-side-column">
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h4>{t(props.language, "termLibrary")}</h4>
+            </div>
             <label className="checkbox-row">
               <input
                 type="checkbox"
-                checked={preferenceDraft.onboardingCompleted}
+                checked={preferenceDraft.customTermLibraryEnabled}
                 onChange={(event) =>
                   props.onPreferenceChange({
                     ...preferenceDraft,
-                    onboardingCompleted: event.target.checked
+                    customTermLibraryEnabled: event.target.checked
                   })
                 }
               />
-              <span>{t(props.language, "skipGuide")}</span>
+              <span>{t(props.language, "enableCustomTerms")}</span>
             </label>
-            <label className="checkbox-row">
-              <input
-                type="checkbox"
-                checked={preferenceDraft.exportIncludePlaceholders}
-                onChange={(event) =>
-                  props.onPreferenceChange({
-                    ...preferenceDraft,
-                    exportIncludePlaceholders: event.target.checked
-                  })
-                }
-              />
-              <span>{t(props.language, "exportPlaceholders")}</span>
-            </label>
+            <p className="muted">{t(props.language, "termLibraryNote")}</p>
+            <div className="term-library-list">
+              {preferenceDraft.customTerms.length === 0 ? <p className="muted">{t(props.language, "noCustomTerms")}</p> : null}
+              {preferenceDraft.customTerms.map((item) => (
+                <article key={item.id} className="term-library-item">
+                  <label className="checkbox-row">
+                    <input
+                      type="checkbox"
+                      checked={item.enabled}
+                      onChange={(event) => updateCustomTerm(item.id, { enabled: event.target.checked })}
+                    />
+                    <span>{t(props.language, "termEntryEnabled")}</span>
+                  </label>
+                  <label className="form-field">
+                    <span>{t(props.language, "termCanonical")}</span>
+                    <input
+                      value={item.canonical}
+                      onChange={(event) => updateCustomTerm(item.id, { canonical: event.target.value })}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>{t(props.language, "termAliases")}</span>
+                    <textarea
+                      rows={4}
+                      placeholder={t(props.language, "termAliasesHint")}
+                      value={customTermAliasesText(item)}
+                      onChange={(event) =>
+                        updateCustomTerm(item.id, {
+                          aliases: event.target.value
+                            .split(/\n+/)
+                            .map((alias) => alias.trim())
+                            .filter(Boolean)
+                        })
+                      }
+                    />
+                  </label>
+                  <button className="danger-ghost" type="button" onClick={() => removeCustomTerm(item.id)}>
+                    {t(props.language, "removeTerm")}
+                  </button>
+                </article>
+              ))}
+            </div>
+            <button type="button" onClick={appendCustomTerm}>
+              {t(props.language, "addTerm")}
+            </button>
           </div>
 
-          <div className="guide-merged">
-            <div className="guide-grid">
-              <div className="guide-card">
-                <span className="guide-label">{t(props.language, "microphonePermission")}</span>
-                <strong className="mono-text">{permissionLabel(environment.microphonePermission, props.language)}</strong>
-              </div>
-              <div className="guide-card">
-                <span className="guide-label">{t(props.language, "blackhole")}</span>
-                <strong>{environment.hasBlackHoleDevice ? t(props.language, "detected") : t(props.language, "notDetected")}</strong>
-              </div>
+          <div className="settings-card">
+            <div className="settings-card-head">
+              <h4>{t(props.language, "workspacePrefs")}</h4>
             </div>
 
-            <div className="control-grid">
-              <button type="button" onClick={props.onRequestAccess}>
-                {t(props.language, "requestMic")}
-              </button>
-              <button type="button" onClick={props.onRefresh}>
-                {t(props.language, "refreshDevices")}
-              </button>
+            <div className="preference-list">
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={preferenceDraft.onboardingCompleted}
+                  onChange={(event) =>
+                    props.onPreferenceChange({
+                      ...preferenceDraft,
+                      onboardingCompleted: event.target.checked
+                    })
+                  }
+                />
+                <span>{t(props.language, "skipGuide")}</span>
+              </label>
+              <label className="checkbox-row">
+                <input
+                  type="checkbox"
+                  checked={preferenceDraft.exportIncludePlaceholders}
+                  onChange={(event) =>
+                    props.onPreferenceChange({
+                      ...preferenceDraft,
+                      exportIncludePlaceholders: event.target.checked
+                    })
+                  }
+                />
+                <span>{t(props.language, "exportPlaceholders")}</span>
+              </label>
+            </div>
+
+            <div className="guide-merged">
+              <div className="guide-grid">
+                <div className="guide-card">
+                  <span className="guide-label">{t(props.language, "microphonePermission")}</span>
+                  <strong className="mono-text">{permissionLabel(environment.microphonePermission, props.language)}</strong>
+                </div>
+                <div className="guide-card">
+                  <span className="guide-label">{t(props.language, "blackhole")}</span>
+                  <strong>{environment.hasBlackHoleDevice ? t(props.language, "detected") : t(props.language, "notDetected")}</strong>
+                </div>
+              </div>
+
+              <div className="control-grid">
+                <button type="button" onClick={props.onRequestAccess}>
+                  {t(props.language, "requestMic")}
+                </button>
+                <button type="button" onClick={props.onRefresh}>
+                  {t(props.language, "refreshDevices")}
+                </button>
+              </div>
             </div>
           </div>
 
-          <div className="settings-actions">
-            <button className="primary-button" disabled={props.saving} type="button" onClick={props.onSave}>
-              {props.saving ? t(props.language, "saving") : t(props.language, "saveSettings")}
-            </button>
-            <button className="secondary-button" type="button" onClick={props.onCompleteGuide}>
-              {t(props.language, "finishGuide")}
-            </button>
+          <div className="settings-card settings-actions-card">
+            <div className="settings-actions">
+              <button className="primary-button" disabled={props.saving} type="button" onClick={props.onSave}>
+                {props.saving ? t(props.language, "saving") : t(props.language, "saveSettings")}
+              </button>
+              <button className="secondary-button" type="button" onClick={props.onCompleteGuide}>
+                {t(props.language, "finishGuide")}
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -2270,122 +2235,6 @@ function TranscriptPanel(props: {
           </article>
         ))}
       </div>
-    </div>
-  );
-}
-
-function HighlightsPanel(props: {
-  detail: MeetingDetail | null;
-  compact?: boolean;
-  meetingTerms: string[];
-  language: UiLanguage;
-}) {
-  const [expanded, setExpanded] = useState(true);
-  const isExpanded = props.compact || expanded;
-
-  function handleHighlightWheel(event: WheelEvent<HTMLDivElement>): void {
-    const region = event.currentTarget;
-    if (region.scrollHeight <= region.clientHeight) {
-      return;
-    }
-
-    const atTop = region.scrollTop <= 0;
-    const atBottom = region.scrollTop + region.clientHeight >= region.scrollHeight - 1;
-    const canScrollUp = event.deltaY < 0 && !atTop;
-    const canScrollDown = event.deltaY > 0 && !atBottom;
-
-    if (!canScrollUp && !canScrollDown) {
-      return;
-    }
-
-    event.preventDefault();
-    region.scrollTop += event.deltaY;
-  }
-
-  if (!props.detail) {
-    return (
-      <div className={`detail-card highlight-card ${props.compact ? "compact" : ""} empty-state`}>
-        <h3>{t(props.language, "highlights")}</h3>
-        <p>{t(props.language, "noHighlights")}</p>
-      </div>
-    );
-  }
-
-  const groups = groupMeetingHighlights(props.detail);
-  const flatItems = groups.flatMap((group) => group.items);
-
-  return (
-    <div className={`detail-card highlight-card ${props.compact ? "compact" : ""}`}>
-      <button
-        className={`section-toggle ${props.compact ? "locked" : ""}`}
-        type="button"
-        aria-disabled={props.compact}
-        aria-expanded={isExpanded}
-        onClick={() => {
-          if (!props.compact) {
-            setExpanded((value) => !value);
-          }
-        }}
-      >
-        <div className="section-head">
-          <div>
-            <h4>{t(props.language, "highlights")}</h4>
-          </div>
-          <div className="highlight-head-actions">
-            <span className="mono-text">{countLabel(props.detail.highlights.length, "itemUnit", props.language)}</span>
-          </div>
-        </div>
-      </button>
-      {props.detail.highlights.length === 0 ? (
-        <p className="muted">{t(props.language, "noHighlights")}</p>
-      ) : (
-        <>
-          <div className="highlight-chip-row">
-            {groups.map((group) => (
-              <span key={group.kind} className={`status-tag accent subtle-${group.kind}`}>
-                {highlightKindLabel(group.kind, props.language)} {group.items.length}
-              </span>
-            ))}
-          </div>
-          {props.compact ? (
-            <div className="highlight-list scroll-shell highlight-scroll-region" onWheel={handleHighlightWheel}>
-              {flatItems.map((item) => (
-                <article key={item.id} className={`highlight-item kind-${item.kind}`}>
-                  <div className="highlight-item-head">
-                    <span className="status-tag accent">{highlightKindLabel(item.kind, props.language)}</span>
-                    <span className="highlight-time mono-text">{formatCueTime(item.startMs)}</span>
-                  </div>
-                  <p>{highlightText(item.text, props.meetingTerms)}</p>
-                </article>
-              ))}
-            </div>
-          ) : (
-            <div
-              className={isExpanded ? "highlight-groups scroll-shell highlight-scroll-region" : "highlight-groups"}
-              onWheel={isExpanded ? handleHighlightWheel : undefined}
-            >
-              {groups.map((group) => (
-                <section key={group.kind} className="highlight-group">
-                  <div className="section-head">
-                    <strong>{highlightKindLabel(group.kind, props.language)}</strong>
-                    <span className="mono-text">{group.items.length}</span>
-                  </div>
-                  <div className="highlight-list">
-                    {group.items.map((item) => (
-                      <article key={item.id} className={`highlight-item kind-${item.kind}`}>
-                        <div className="highlight-item-head">
-                          <span className="highlight-time mono-text">{formatCueTime(item.startMs)}</span>
-                        </div>
-                        <p>{highlightText(item.text, props.meetingTerms)}</p>
-                      </article>
-                    ))}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
-        </>
-      )}
     </div>
   );
 }
@@ -2463,27 +2312,38 @@ function SummaryPanel(props: {
             </p>
             {stale ? <p className="warning-text">{t(props.language, "staleSummary")}</p> : null}
             <strong>{t(props.language, "keyPoints")}</strong>
-            <ul>
-              {props.detail.summary.bulletPoints.map((item) => (
-                <li key={item}>{highlightText(item, props.meetingTerms)}</li>
-              ))}
-            </ul>
+            {props.detail.summary.decisions.length > 0 ? (
+              <ul>
+                {props.detail.summary.decisions.map((item) => (
+                  <li key={item}>{highlightText(item, props.meetingTerms)}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">{t(props.language, "noDecisions")}</p>
+            )}
             <strong>{t(props.language, "actionItems")}</strong>
-            <ul>
-              {props.detail.summary.actionItems.map((item) => (
-                <li key={item}>{highlightText(item, props.meetingTerms)}</li>
-              ))}
-            </ul>
-            {props.detail.summary.risks.length > 0 ? (
-              <>
-                <strong>{t(props.language, "risks")}</strong>
-                <ul>
-                  {props.detail.summary.risks.map((item) => (
-                    <li key={item}>{highlightText(item, props.meetingTerms)}</li>
-                  ))}
-                </ul>
-              </>
-            ) : null}
+            {props.detail.summary.actionItems.length > 0 ? (
+              <div className="action-item-list">
+                {props.detail.summary.actionItems.map((item) => (
+                  <article key={`${item.text}-${item.owner ?? "none"}-${item.due ?? "none"}`} className="action-item-card">
+                    <p>{highlightText(item.text, props.meetingTerms)}</p>
+                    <small>{formatActionItemMeta(item, props.language)}</small>
+                  </article>
+                ))}
+              </div>
+            ) : (
+              <p className="muted">{t(props.language, "none")}</p>
+            )}
+            <strong>{t(props.language, "risks")}</strong>
+            {props.detail.summary.issues.length > 0 ? (
+              <ul>
+                {props.detail.summary.issues.map((item) => (
+                  <li key={item}>{highlightText(item, props.meetingTerms)}</li>
+                ))}
+              </ul>
+            ) : (
+              <p className="muted">{t(props.language, "noIssues")}</p>
+            )}
             <div className="qa-section">
               <div className="section-head">
                 <strong>{t(props.language, "qa")}</strong>

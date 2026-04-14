@@ -1,57 +1,13 @@
 import { QA_SYSTEM_PROMPT, SUMMARY_SYSTEM_PROMPT } from "@shared/prompts";
 import type { MeetingQaItem, MeetingSummary, ProviderConfig } from "@shared/types";
 import { chunkTextByLength } from "@main/utils/chunking";
-
-interface SummaryPayload {
-  overview: string;
-  bulletPoints: string[];
-  actionItems: string[];
-  risks: string[];
-}
-
-function stripCodeFence(input: string): string {
-  return input.replace(/```(?:json)?\s*([\s\S]*?)```/gi, "$1").trim();
-}
-
-function sanitizePlainAnswer(input: string): string {
-  return stripCodeFence(input)
-    .replace(/^\s*[-*+]\s+/gm, "")
-    .replace(/^\s*\d+\.\s+/gm, "")
-    .replace(/^\s{0,3}#{1,6}\s+/gm, "")
-    .replace(/\*\*(.*?)\*\*/g, "$1")
-    .replace(/__(.*?)__/g, "$1")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-function sanitizeSummaryField(input: string): string {
-  return sanitizePlainAnswer(input)
-    .replace(/^\{\s*"overview"\s*:\s*/i, "")
-    .replace(/^\s*"overview"\s*:\s*/i, "")
-    .replace(/^"+|"+$/g, "")
-    .trim();
-}
-
-function extractJsonObject(input: string): SummaryPayload | null {
-  const normalized = stripCodeFence(input);
-  const match = normalized.match(/\{[\s\S]*\}/);
-  if (!match) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(match[0]) as Partial<SummaryPayload>;
-    return {
-      overview: parsed.overview ?? "",
-      bulletPoints: Array.isArray(parsed.bulletPoints) ? parsed.bulletPoints.filter(Boolean) : [],
-      actionItems: Array.isArray(parsed.actionItems) ? parsed.actionItems.filter(Boolean) : [],
-      risks: Array.isArray(parsed.risks) ? parsed.risks.filter(Boolean) : []
-    };
-  } catch {
-    return null;
-  }
-}
+import {
+  extractSummaryJsonObject,
+  fallbackSummaryPayload,
+  sanitizePlainAnswer,
+  summaryToQaContext,
+  stripCodeFence
+} from "@main/utils/summary-parser";
 
 export class OpenAICompatibleLlmProvider {
   constructor(private readonly config: ProviderConfig["llm"]) {}
@@ -86,9 +42,9 @@ export class OpenAICompatibleLlmProvider {
     const final = await this.requestSummary(`请基于以下材料生成最终会议纪要。会议标题：${title}\n\n${source}`);
     return {
       overview: final.overview,
-      bulletPoints: final.bulletPoints,
       actionItems: final.actionItems,
-      risks: final.risks,
+      decisions: final.decisions,
+      issues: final.issues,
       rawResponse: JSON.stringify(final, null, 2)
     };
   }
@@ -113,9 +69,7 @@ export class OpenAICompatibleLlmProvider {
             .slice(-6)
             .map((item, index) => `第${index + 1}轮问答\n问：${item.question}\n答：${item.answer}`)
             .join("\n\n");
-    const summaryText = input.summary
-      ? `会议概览：${input.summary.overview}\n关键结论：${input.summary.bulletPoints.join("；")}\n待办事项：${input.summary.actionItems.join("；")}\n风险与未决问题：${input.summary.risks.join("；")}`
-      : "暂无会议纪要";
+    const summaryText = summaryToQaContext(input.summary);
 
     const response = await this.requestTextCompletion(
       QA_SYSTEM_PROMPT,
@@ -125,40 +79,25 @@ export class OpenAICompatibleLlmProvider {
     return sanitizePlainAnswer(response);
   }
 
-  private async requestSummary(content: string): Promise<SummaryPayload> {
+  private async requestSummary(content: string) {
     const contentText = stripCodeFence(await this.requestTextCompletion(SUMMARY_SYSTEM_PROMPT, content));
-    const parsed = extractJsonObject(contentText);
+    const parsed = extractSummaryJsonObject(contentText);
 
     if (parsed) {
-      return {
-        overview: sanitizeSummaryField(parsed.overview),
-        bulletPoints: parsed.bulletPoints.map(sanitizeSummaryField).filter(Boolean),
-        actionItems: parsed.actionItems.map(sanitizeSummaryField).filter(Boolean),
-        risks: parsed.risks.map(sanitizeSummaryField).filter(Boolean)
-      };
+      return parsed;
     }
 
     const repairedText = await this.requestTextCompletion(
-      "你是结构化输出修复助手。把用户提供的会议纪要内容重写为严格 JSON，字段只能是 overview, bulletPoints, actionItems, risks。不要输出任何解释，不要使用代码块。",
+      "你是结构化输出修复助手。把用户提供的会议纪要内容重写为严格 JSON，字段只能是 overview, actionItems, decisions, issues。不要输出任何解释，不要使用代码块。",
       contentText
     );
-    const repaired = extractJsonObject(repairedText);
+    const repaired = extractSummaryJsonObject(repairedText);
 
     if (repaired) {
-      return {
-        overview: sanitizeSummaryField(repaired.overview),
-        bulletPoints: repaired.bulletPoints.map(sanitizeSummaryField).filter(Boolean),
-        actionItems: repaired.actionItems.map(sanitizeSummaryField).filter(Boolean),
-        risks: repaired.risks.map(sanitizeSummaryField).filter(Boolean)
-      };
+      return repaired;
     }
 
-    return {
-      overview: "摘要格式异常，请重新生成。",
-      bulletPoints: [],
-      actionItems: [],
-      risks: []
-    };
+    return fallbackSummaryPayload();
   }
 
   private async requestTextCompletion(systemPrompt: string, content: string): Promise<string> {

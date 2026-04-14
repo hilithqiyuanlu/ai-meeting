@@ -16,6 +16,13 @@ export type TranscriptQuality = "high" | "medium" | "low";
 export type AudioIssue = "echo" | "noise" | "low-level" | "clipping";
 export type HighlightKind = "decision" | "action" | "risk" | "follow-up";
 
+export interface CustomTermEntry {
+  id: string;
+  canonical: string;
+  aliases: string[];
+  enabled: boolean;
+}
+
 export interface MeetingSession {
   id: string;
   title: string;
@@ -65,15 +72,21 @@ export interface MeetingHighlight {
 export interface MeetingSummary {
   sessionId: string;
   overview: string;
-  bulletPoints: string[];
-  actionItems: string[];
-  risks: string[];
+  actionItems: StructuredActionItem[];
+  decisions: string[];
+  issues: string[];
   rawResponse: string;
   sourceSegmentSeq: number;
   sourceTranscriptChars: number;
   generatedWhileStatus: Extract<MeetingStatus, "recording" | "paused" | "completed">;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface StructuredActionItem {
+  text: string;
+  owner: string | null;
+  due: string | null;
 }
 
 export interface MeetingQaItem {
@@ -128,6 +141,8 @@ export interface AppPreferences {
   captureMode: CaptureMode;
   onboardingCompleted: boolean;
   uiLanguage: UiLanguage;
+  customTermLibraryEnabled: boolean;
+  customTerms: CustomTermEntry[];
 }
 
 export interface AudioInputDevice {
@@ -166,7 +181,6 @@ export interface EnvironmentStatus {
 export interface MeetingDetail {
   session: MeetingSession;
   transcriptSegments: TranscriptSegment[];
-  highlights: MeetingHighlight[];
   summary: MeetingSummary | null;
   qaItems: MeetingQaItem[];
 }
@@ -236,10 +250,6 @@ export interface AppEventMap {
   "summary-updated": {
     sessionId: string;
     summary: MeetingSummary | null;
-  };
-  "highlight-added": {
-    sessionId: string;
-    highlight: MeetingHighlight;
   };
   "local-model-updated": LocalAsrStatus;
   error: {

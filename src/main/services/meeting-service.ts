@@ -3,7 +3,6 @@ import type {
   AudioActivityState,
   AppEventMap,
   MeetingDetail,
-  MeetingHighlight,
   RecordingSnapshot,
   StartMeetingInput,
   TranscriptSegment
@@ -19,7 +18,6 @@ import { EnvironmentService } from "./environment-service";
 import { ExportService } from "./export-service";
 import { SystemAudioHelperClient } from "./audio-helper";
 import { computePcmRms, getAudioState } from "@main/utils/audio";
-import { extractHighlightCandidates } from "@main/utils/highlights";
 import { stitchTranscript } from "@main/utils/transcript";
 import { LocalAsrModelService } from "./local-asr-model-service";
 
@@ -308,9 +306,9 @@ export class MeetingService {
       summary: detail.summary
         ? {
             overview: detail.summary.overview,
-            bulletPoints: detail.summary.bulletPoints,
             actionItems: detail.summary.actionItems,
-            risks: detail.summary.risks,
+            decisions: detail.summary.decisions,
+            issues: detail.summary.issues,
             rawResponse: detail.summary.rawResponse,
             sourceSegmentSeq: detail.summary.sourceSegmentSeq,
             sourceTranscriptChars: detail.summary.sourceTranscriptChars,
@@ -374,7 +372,7 @@ export class MeetingService {
       }) => {
         const nextSpeech =
           payload.kind === "speech"
-            ? stitchTranscript(this.lastSpeechText, payload.text)
+            ? stitchTranscript(this.lastSpeechText, payload.text, this.db.getPreferences())
             : { text: payload.text, overlapChars: payload.overlapChars };
 
         this.recording = {
@@ -422,7 +420,6 @@ export class MeetingService {
         }
         if (segment.kind === "speech" && segment.text) {
           this.lastSpeechText = segment.text;
-          this.maybeCreateHighlights(sessionId, segment);
         }
 
         this.emit("transcript-final", {
@@ -734,31 +731,5 @@ export class MeetingService {
 
   private emit<K extends keyof AppEventMap>(event: K, payload: AppEventMap[K]): void {
     this.activeWindow?.webContents.send(`app:event:${String(event)}`, payload);
-  }
-
-  private maybeCreateHighlights(sessionId: string, segment: TranscriptSegment): void {
-    if (segment.quality !== "high" || segment.overlapDetected || segment.audioIssues.length > 0) {
-      return;
-    }
-
-    const existingTexts = this.db
-      .listHighlights(sessionId)
-      .slice(-6)
-      .map((item) => item.text);
-    const candidates = extractHighlightCandidates(segment.text, existingTexts);
-
-    for (const candidate of candidates) {
-      const highlight: MeetingHighlight = this.db.appendHighlight({
-        sessionId,
-        segmentId: segment.id,
-        seq: segment.seq,
-        kind: candidate.kind,
-        text: candidate.text
-      });
-      this.emit("highlight-added", {
-        sessionId,
-        highlight
-      });
-    }
   }
 }

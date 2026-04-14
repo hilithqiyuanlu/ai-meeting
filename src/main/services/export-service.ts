@@ -28,14 +28,16 @@ export class ExportService {
     if (detail.summary) {
       lines.push("## AI 纪要", "", detail.summary.overview, "");
       lines.push(`- 纪要来源：基于第 ${detail.summary.sourceSegmentSeq} 段生成`, "");
-      lines.push("### 关键结论", ...detail.summary.bulletPoints.map((item) => `- ${item}`), "");
-      lines.push("### 待办事项", ...detail.summary.actionItems.map((item) => `- ${item}`), "");
-      lines.push("### 风险与未决问题", ...detail.summary.risks.map((item) => `- ${item}`), "");
-    }
-
-    if (detail.highlights.length > 0) {
-      lines.push("## 会中重点提醒", "");
-      lines.push(...detail.highlights.map((item) => `- [${item.kind}] ${item.text}`), "");
+      lines.push(
+        "### 行动项",
+        ...detail.summary.actionItems.map((item) => {
+          const meta = [`负责人：${item.owner ?? "未明确"}`, `截止时间：${item.due ?? "未明确"}`].join("，");
+          return `- ${item.text}（${meta}）`;
+        }),
+        ""
+      );
+      lines.push("### 决策", ...detail.summary.decisions.map((item) => `- ${item}`), "");
+      lines.push("### 问题", ...detail.summary.issues.map((item) => `- ${item}`), "");
     }
 
     lines.push("## 全文转写", "");
