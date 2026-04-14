@@ -935,11 +935,21 @@ p {
 
 .result-header {
   display: grid;
-  gap: 14px;
+  gap: 10px;
 }
 
 .summary-generate-button {
-  width: 100%;
+  min-width: 132px;
+  width: auto;
+  min-height: 50px;
+  padding: 0 24px;
+  border-radius: 999px;
+}
+
+.summary-generate-button-loading {
+  border-color: rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
 }
 
 .result-body {
@@ -949,6 +959,7 @@ p {
   gap: 12px;
   padding-right: 4px;
   max-height: none;
+  overscroll-behavior: contain;
 }
 
 .summary-status {

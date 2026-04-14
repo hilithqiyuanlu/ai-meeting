@@ -1725,20 +1725,25 @@ function SummaryPanel(props: {
             <p className="eyebrow">AI Summary</p>
             <h4>会议纪要</h4>
           </div>
-          {statusNode}
+          <button
+            className={
+              summaryStatus === "generating"
+                ? "secondary-button summary-generate-button summary-generate-button-loading"
+                : "primary-button summary-generate-button"
+            }
+            disabled={
+              !props.detail ||
+              props.detail.session.summaryStatus === "generating" ||
+              props.detail.transcriptSegments.every((segment) => segment.kind !== "speech")
+            }
+            type="button"
+            onClick={props.onGenerateSummary}
+            aria-label={summaryStatus === "generating" ? "纪要生成中" : stale ? "重新生成纪要" : "生成纪要"}
+          >
+            {summaryStatus === "generating" ? <LoadingDots label="纪要生成中" /> : "生成"}
+          </button>
         </div>
-        <button
-          className="primary-button summary-generate-button"
-          disabled={
-            !props.detail ||
-            props.detail.session.summaryStatus === "generating" ||
-            props.detail.transcriptSegments.every((segment) => segment.kind !== "speech")
-          }
-          type="button"
-          onClick={props.onGenerateSummary}
-        >
-          {stale ? "重新生成纪要" : "生成纪要"}
-        </button>
+        {statusNode}
       </div>
       <div className="result-body">
         {!props.detail ? (
@@ -1783,11 +1788,14 @@ function SummaryPanel(props: {
                   placeholder="继续追问这场会议，例如：老师提出的具体要求是什么？"
                   value={props.qaInput}
                   onChange={(event) => props.onQaInputChange(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" && !event.shiftKey) {
+                      event.preventDefault();
+                      void props.onAskQuestion();
+                    }
+                  }}
                   rows={3}
                 />
-                <button disabled={props.asking || !props.qaInput.trim()} type="button" onClick={props.onAskQuestion}>
-                  {props.asking ? "正在回答..." : "提问"}
-                </button>
               </div>
             </div>
           </>
@@ -1826,9 +1834,6 @@ function ControlRail(props: {
             <p className="eyebrow">Controls</p>
             <h4>录制控制</h4>
           </div>
-          <span className="mono-text">
-            {props.currentSession ? meetingStatusLabel(props.currentSession.status) : "idle"}
-          </span>
         </div>
 
         <div className="control-grid">
